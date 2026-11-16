@@ -1,6 +1,6 @@
 {
   "name": "ooznest-control-duet",
-  "version": "1.0.196",
+  "version": "0.0.195",
   "description": "Ooznest Control for Duet RepRapFirmware",
   "main": "main.js",
   "scripts": {
