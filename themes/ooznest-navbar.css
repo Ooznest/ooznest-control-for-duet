@@ -192,7 +192,14 @@
 }
 
 /* Hide controller extensions until $I confirms grblHAL. */
+html[data-controller-firmware="duet"] [data-duet-probe-unsupported],
+html[data-controller-firmware="duet"] [data-grblhal-only]:not([data-duet-supported]),
+html:not([data-controller-firmware="grblhal"]):not([data-controller-firmware="grbl"]) [data-duet-unsupported],
 html[data-controller-firmware="grbl"] [data-grblhal-only],
 html[data-controller-firmware="unknown"] [data-grblhal-only] {
+    display: none !important;
+}
+
+html:not([data-controller-firmware="duet"]) [data-duet-only] {
     display: none !important;
 }

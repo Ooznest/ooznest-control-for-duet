@@ -1,6 +1,6 @@
 {
-  "name": "com.ooznest.cnc",
-  "displayName": "Ooznest Control",
+  "name": "com.ooznest.cnc.duet",
+  "displayName": "Ooznest Control Duet",
   "version": "1.0.0",
   "description": "A sample Apache Cordova application that responds to the deviceready event.",
   "main": "index.js",

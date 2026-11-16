@@ -436,13 +436,13 @@ export class AlarmsAndErrors {
         this.domBody.innerHTML = `
             <p class="text-sm font-bold text-grey-dark mb-3">${message}</p>
             <input type="text" id="cnc-modal-input" 
-                   class="ooznest-field w-full text-sm"
-                   value="${defaultValue || ''}" />
+                   class="ooznest-field w-full text-sm" />
         `;
 
         this.domFooter.innerHTML = '';
 
         const inputEl = this.domBody.querySelector('#cnc-modal-input');
+        inputEl.value = defaultValue ?? '';
 
         let btnSubmit;
         let btnCancel;

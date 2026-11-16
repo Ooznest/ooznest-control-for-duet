@@ -95,6 +95,10 @@ class UIManager {
 
             ws.isGrblHAL = false;
             ws.supportsProbeStatus = false;
+            if (ws.duet) {
+                this.syncFirmwareUI('duet');
+                return;
+            }
             window.grblSettings?.resetControllerData?.();
             this.syncFirmwareUI('unknown');
             this._identifyingFirmware = true;
@@ -148,9 +152,14 @@ class UIManager {
                     ws.sendRealtime('\x87');
                 }, 4500);
             };
-            later(() => ws.sendCommand('$I'), 2000);
+            if (ws.type === 'webserial' || ws.type === 'usb') later(() => ws.sendCommand('\nM115'), 500);
             later(() => {
-                if (this._identifyingFirmware) {
+                if (this._identifyingFirmware && !ws.isDuetSerial && ['usb', 'webserial'].includes(ws.type)) {
+                    ws.sendCommand('\nM115');
+                }
+            }, 2000);
+            later(() => {
+                if (this._identifyingFirmware && !ws.isDuetSerial) {
                     this._identifyingFirmware = false;
                     window.showToast?.('Controller identification timed out', 'plug-zap', 'error');
                     ws.disconnect();
@@ -183,12 +192,129 @@ class UIManager {
     }
 
     pollStatus(ws, now = Date.now()) {
-        if (!ws.isConnected) return;
+        if (!ws.isConnected || ws.duet) return;
+        if (ws.isDuetSerial) {
+            if (ws.duetAxisWrite || ws.duetSerialPollPending || now - (this._lastDuetSerialPoll ?? 0) < 500) return;
+            this._lastDuetSerialPoll = now;
+            ws.duetSerialPollPending = true;
+            ws.sendCommand('M408 S0').catch(error => {
+                ws.duetSerialPollPending = false;
+                ws.emit('error', error);
+            });
+            return;
+        }
+        if (this._identifyingFirmware && (ws.type === 'usb' || ws.type === 'webserial')) return;
         ws.sendRealtime(ws.supportsProbeStatus ? '\x80' : '?');
     }
 
+    renderDuetSettingsGroup(group) {
+        const view = document.getElementById('duet-settings-view');
+        const search = document.getElementById('duet-settings-search');
+        const groups = [...view.querySelectorAll('[data-duet-settings-nav]')];
+        if (group) search.value = '';
+        if (group === 'Spindle') window.ws?.readDuetSpindles();
+        const selected = group || view.dataset.activeGroup || 'Root';
+        const active = groups.some(button => !button.hidden && button.dataset.duetSettingsNav === selected)
+            ? selected : 'Root';
+        const networkAvailable = document.getElementById('duet-network-controls').dataset.unavailable === 'false';
+        const networkGroup = networkAvailable && ['Networking', 'Ethernet', 'Wi-Fi'].includes(active);
+        document.getElementById('duet-save-network').hidden = !networkGroup;
+        document.getElementById('duet-settings-actions').hidden = networkGroup;
+        view.dataset.activeGroup = active;
+        const query = search.value.trim().toLowerCase();
+        groups.forEach(button => {
+            const current = !query && button.dataset.duetSettingsNav === active;
+            button.classList.toggle('is-active', current);
+            if (current) button.setAttribute('aria-current', 'true');
+            else button.removeAttribute('aria-current');
+        });
+        let matches = 0;
+        view.querySelectorAll('[data-duet-settings-group]').forEach(section => {
+            const name = section.dataset.duetSettingsGroup;
+            const available = section.dataset.unavailable !== 'true';
+            const axisRows = section.id === 'duet-axis-rows';
+            const inGroup = name === active || (axisRows && active.endsWith('-axis'));
+            section.hidden = !available || (!query && !inGroup);
+            const rows = section.matches('tr') ? [section] : [...section.rows];
+            rows.forEach(row => {
+                const unavailable = row.hasAttribute('data-duet-wifi') && name !== 'Wi-Fi';
+                const match = (name + ' ' + row.textContent + ' ' + (row.querySelector('input:not([type=password])')?.value || ''))
+                    .toLowerCase().includes(query);
+                row.hidden = unavailable || section.hidden || (!!query && !match) ||
+                    (!query && axisRows && row.dataset.duetAxisGroup !== active);
+                if (!row.hidden) matches++;
+            });
+        });
+        document.getElementById('duet-settings-group-title').textContent = query ? 'Search Results (' + matches + ')' : active;
+        document.getElementById('duet-settings-table').hidden = matches === 0;
+        const categories = document.getElementById('duet-settings-subcategories');
+        const grid = categories.querySelector('.grid');
+        const children = groups.filter(button => {
+            const name = button.dataset.duetSettingsNav;
+            const networkChild = name === 'Wi-Fi' || name === 'Ethernet';
+            const axisChild = name.endsWith('-axis');
+            return !button.hidden && (active === 'Root' ? name !== 'Root' && !networkChild && !axisChild :
+                (active === 'Networking' && networkChild) || (active === 'Axes' && axisChild));
+        });
+        categories.hidden = !!query || !children.length;
+        if (!categories.hidden) {
+            const template = document.getElementById('duet-settings-category-card');
+            grid.replaceChildren(...children.map(button => {
+                const card = template.content.firstElementChild.cloneNode(true);
+                card.querySelector('span span').textContent = button.dataset.duetSettingsNav;
+                card.onclick = () => button.click();
+                return card;
+            }));
+            window.lucide?.createIcons();
+        }
+        document.getElementById('duet-axis-settings').hidden = !query && active !== 'Axes' && !active.endsWith('-axis');
+        if (group && networkGroup) void window.ws?.readDuetNetwork?.();
+        document.getElementById('duet-network-settings-hint').hidden =
+            !!query || active !== 'Networking' ||
+            document.getElementById('duet-network-controls').dataset.unavailable !== 'true';
+    }
+
     syncFirmwareUI(firmware) {
+        if (firmware === 'duet' || firmware === 'offline') this._identifyingFirmware = false;
         document.documentElement.dataset.controllerFirmware = firmware;
+        if (firmware === 'duet' &&
+            document.querySelector('.probe-tab-content[data-duet-probe-unsupported]:not(.hidden)')) {
+            const outside = document.querySelector('.probe-tab-btn[data-target="tab-outside-corner"]');
+            if (outside) window.probeHandler?.switchProbeTab('tab-outside-corner', outside);
+        }
+        const continuousJog = document.getElementById('jogContinuous');
+        continuousJog.disabled = firmware === 'duet';
+        if (continuousJog.disabled) {
+            continuousJog.checked = false;
+            document.getElementById('stepSize').disabled = !window.ws?.isConnected;
+        } else {
+            continuousJog.checked = !!window.store.get('jog.continuous');
+            document.getElementById('stepSize').disabled = continuousJog.checked || !window.ws?.isConnected;
+        }
+        const serialOnly = firmware === 'duet' && window.ws?.isDuetSerial;
+        document.getElementById('duet-sd-usb-help').hidden = !serialOnly;
+        document.querySelectorAll('[data-duet-settings-action]').forEach(fieldset => {
+            fieldset.disabled = !(window.ws?.duet || serialOnly);
+        });
+        const networkControls = document.getElementById('duet-network-controls');
+        const board = window.ws?.duetFirmwareInfo?.board || '';
+        const wifi = /Duet(?: 2)? WiFi\b/i.test(board);
+        const ethernet = /Duet Ethernet/i.test(board);
+        const networkAvailable = serialOnly && (wifi || ethernet);
+        networkControls.dataset.duetSettingsGroup = wifi ? 'Wi-Fi' : 'Ethernet';
+        networkControls.dataset.unavailable = String(!networkAvailable);
+        document.querySelector('[data-duet-settings-nav="Wi-Fi"]').hidden = !serialOnly || !wifi;
+        document.querySelector('[data-duet-settings-nav="Ethernet"]').hidden = !serialOnly || !ethernet;
+        networkControls.querySelectorAll('[data-duet-wifi]').forEach(row => { row.hidden = !wifi; });
+        if (!serialOnly) document.getElementById('duet-network-form').reset();
+        document.getElementById('duet-workbee-model').disabled = !(window.ws?.duet || serialOnly);
+        this.renderDuetSettingsGroup();
+        const sdTab = document.getElementById('sd-tab-btn');
+        if (sdTab) sdTab.hidden = serialOnly;
+        document.getElementById('run-job-btn').hidden = serialOnly;
+        if (serialOnly && !document.getElementById('sd-view')?.classList.contains('hidden')) {
+            window.switchTab?.('viewer-view');
+        }
         if (firmware === 'grbl' || firmware === 'unknown') {
             // Move away from panels that are unavailable on this controller.
             const activePane = document.querySelector('.tab-pane:not(.hidden)[data-grblhal-only]');
@@ -322,7 +448,7 @@ class UIManager {
             this.renderUnlockButton('default');
             document.querySelectorAll('#settings-toolbar, #sd-breadcrumb').forEach(el => el.classList.remove('opacity-50', 'pointer-events-none'));
         }
-        else if (state === 'hold' || state === 'door' || state === 'sleep') {
+        else if (['hold', 'door', 'sleep', 'off', 'unknown'].includes(state)) {
             setDisabled(jogControls, true);
             setDisabled(runControls, true);
             setDisabled(macroControls, true);

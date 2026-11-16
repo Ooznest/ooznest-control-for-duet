@@ -40,7 +40,9 @@ export function initializeApp(ws, store, viewer, reporter, term) {
             if (window.viewer) window.viewer.stopAnim();
         }
         if (e.detail.id === 'settings-view' && ws.isConnected) {
-            if (Object.keys(window.grblSettings.settings).length === 0) {
+            if (ws.duet || ws.isDuetSerial) {
+                if (!document.getElementById('duet-axis-rows').children.length) void ws.readDuetAxes();
+            } else if (Object.keys(window.grblSettings.settings).length === 0) {
                 window.grblSettings.fetchSettings();
             } else {
                 window.grblSettings.render();

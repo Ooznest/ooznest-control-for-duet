@@ -27,6 +27,67 @@ export class MacroHandler {
 
         this.load();
         this.initModal();
+        const refreshDuetMacros = () => {
+            if (!document.getElementById('macros-view').classList.contains('hidden')) this.renderDuetMacros();
+        };
+        ws.on('connect', refreshDuetMacros);
+        ws.on('disconnect', refreshDuetMacros);
+    }
+
+    async renderDuetMacros(path = '0:/macros') {
+        const section = document.getElementById('duet-macros');
+        const list = document.getElementById('duet-macro-list');
+        const duet = this.ws.duet;
+        const request = this.duetMacroRequest = {};
+        const current = () => this.duetMacroRequest === request && this.ws.duet === duet;
+        section.hidden = !duet;
+        list.replaceChildren();
+        if (!duet) return;
+
+        const button = (label, action) => {
+            const element = document.createElement('button');
+            element.type = 'button';
+            element.className = 'btn btn-secondary';
+            element.textContent = label;
+            element.onclick = action;
+            list.append(element);
+        };
+        list.textContent = 'Loading SD macros…';
+        try {
+            const entries = [];
+            let first = 0;
+            do {
+                const page = await duet.call('filelist', { dir: path, first });
+                if (!current()) return;
+                entries.push(...page.files);
+                if (page.next && page.next <= first) throw new Error('Invalid Duet file list continuation');
+                first = page.next;
+            } while (first);
+            list.replaceChildren();
+            if (path !== '0:/macros') button('Back', () => this.renderDuetMacros(path.slice(0, path.lastIndexOf('/'))));
+            for (const { name, type } of entries) {
+                if (!name || name === '.' || name === '..' || /[/\\"\x00-\x1f]/.test(name)) continue;
+                const file = path + '/' + name;
+                if (type === 'd') {
+                    button(name + '/', () => this.renderDuetMacros(file));
+                } else {
+                    button(name, () => window.reporter.showConfirm('Run SD Macro', 'Run ' + name + '?', async () => {
+                        if (!current() || this.ws.duetState !== 'I') {
+                            window.showToast?.('The Duet must be connected and idle to run an SD macro.', 'zap', 'error');
+                            return;
+                        }
+                        try {
+                            await duet.send('M98 P"' + file + '"');
+                        } catch (error) {
+                            window.showToast?.(error.message, 'zap', 'error');
+                        }
+                    }));
+                }
+            }
+            if (!list.children.length) list.textContent = 'No SD macros.';
+        } catch (error) {
+            if (current()) list.textContent = 'Could not load SD macros: ' + error.message;
+        }
     }
 
     load() {
@@ -49,7 +110,7 @@ export class MacroHandler {
         this.render();
     }
 
-    run(index) {
+    async run(index) {
         const macro = this.macros[index];
         if (!macro || !macro.gcode) return;
 
@@ -58,17 +119,28 @@ export class MacroHandler {
         // Split by new line and send
         const lines = macro.gcode.split('\n');
         const commandPattern = [];
-        lines.forEach(line => {
+        const duet = this.ws.duet;
+        for (const line of lines) {
             const cmd = line.trim();
             if (cmd && !cmd.startsWith(';')) { // Skip comments and empty lines
-                this.ws.sendCommand(cmd);
+                if (duet) {
+                    if (this.ws.duet !== duet || !this.ws.isConnected) return;
+                    try {
+                        await this.ws.sendCommand(cmd);
+                    } catch (error) {
+                        this.ws.emit('error', error);
+                        return;
+                    }
+                } else {
+                    this.ws.sendCommand(cmd);
+                }
                 if (commandPattern.length < 20) {
                     const code = /^(?:N\d+\s*)?([GM]\d{1,3}(?:\.\d{1,2})?)(?![\d.])/i.exec(cmd)?.[1];
                     const system = /^\$(?:H[XYZABC]?|X|C|\$|G|I)$/i.exec(cmd)?.[0];
                     commandPattern.push((code || system || 'other').toUpperCase());
                 }
             }
-        });
+        }
         if (commandPattern.length) {
             window.appAnalytics?.('macro invoked', { command_pattern: commandPattern.join(' ') });
         }

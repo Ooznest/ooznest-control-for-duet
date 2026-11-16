@@ -106,8 +106,8 @@ export class WebSerial {
     }
 
     async connectToPort(port, baudRate = 115200) {
+        await port.open({ baudRate });
         this.port = port;
-        await this.port.open({ baudRate });
         this.clearPendingState();
         this.isConnected = true;
         this.listeners.connect.forEach(cb => cb());

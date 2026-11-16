@@ -63,7 +63,8 @@ export class TroubleshootingHandler {
         this.syncProbeControls();
         if (this.ws.supportsProbeStatus) this.updateProbeStatus(pins, { full });
         this.updateSignalVisibility();
-        if (pins === this.lastPins) return;
+        const duet = this.ws.duet || this.ws.isDuetSerial;
+        if (!duet && pins === this.lastPins) return;
         this.lastPins = pins;
 
         // All grblHAL Pn: signals
@@ -77,6 +78,13 @@ export class TroubleshootingHandler {
             const el = document.getElementById(`pin-indicator-${char}`);
             if (!el) return;
 
+            if (char === 'P' && duet && !this.ws.duetProbeKnown) {
+                el.classList.remove('signal-on');
+                el.classList.add('signal-off');
+                el.style.cssText = '';
+                el.textContent = 'UNKNOWN';
+                return;
+            }
             const isActive = pins.includes(char);
             
             // Troubleshooting tab uses the .signal-badge class
@@ -189,7 +197,7 @@ export class TroubleshootingHandler {
 
     _initINA219Chart() {
         const canvas = document.getElementById('ina219-chart');
-        if (!canvas || this.ina219Chart) return;
+        if (!canvas || this.ina219Chart || typeof Chart === 'undefined') return;
 
         const powerTab = document.getElementById('trouble-tab-power');
         if (powerTab && powerTab.classList.contains('hidden')) return;
@@ -679,6 +687,11 @@ export class TroubleshootingHandler {
 
     updateSignalVisibility() {
         this._resetSignalVisibility();
+        if (this.ws.duet || this.ws.isDuetSerial) {
+            ['x', 'y', 'z', 'a', 'b', 'c', 'u', 'v', 'w', 'd', 'r', 'h', 's', 'e', 'l', 't', 'q', 'm', 'f']
+                .forEach(key => this._setSignalRowVisible(key, false));
+            return;
+        }
         if (this.ws.isConnected && !this.ws.isGrblHAL) {
             ['e', 'l', 't', 'q', 'm', 'f'].forEach(key => this._setSignalRowVisible(key, false));
             return;
@@ -714,10 +727,11 @@ export class TroubleshootingHandler {
         html += '</div><div class="divide-y divide-grey-light/60">';
         mapping.forEach((axis, i) => {
             const isHomed = (mask >> i) & 1;
+            const state = mask == null ? 'Unknown' : isHomed ? 'HOMED' : 'Not homed';
             html += `<div class="flex items-center gap-2 px-3 py-2">
                 <span class="text-xs font-medium text-grey-dark flex-1">${axis} Axis</span>
                 <span class="signal-badge ${isHomed ? 'signal-on' : 'signal-off'}"
-                    style="${isHomed ? 'background:#dcfce7;color:#16a34a;border-color:#86efac;' : ''}">${isHomed ? 'HOMED' : '—'}</span>
+                    style="${isHomed ? 'background:#dcfce7;color:#16a34a;border-color:#86efac;' : ''}">${state}</span>
             </div>`;
         });
         html += '</div></div>';

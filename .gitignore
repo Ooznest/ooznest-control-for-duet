@@ -18,3 +18,11 @@ cordova/resources/ios/
 .vscode/
 .DS_Store
 *.log
+
+# Local bench outputs
+duet-*.png
+duet-*.out
+duet-*.err
+dist-duet/
+duet-preview-profile/
+visible-electron.err

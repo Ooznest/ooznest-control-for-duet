@@ -74,6 +74,15 @@ class JobController {
             }
 
             if (this.sdJobActive) {
+                if (window.ws.duet) {
+                    const pauseButton = document.getElementById('pause-job-btn');
+                    const paused = window.ws.duetState === 'A';
+                    const label = paused ? 'Resume' : 'Pause';
+                    if (pauseButton && pauseButton.textContent.trim() !== label) {
+                        pauseButton.innerHTML = `<i data-lucide="${paused ? 'play' : 'pause'}" class="text-lg"></i> ${label}`;
+                        window.lucide?.createIcons();
+                    }
+                }
                 this.updateJobProgressUI(pct, filename ? `File: ${filename}` : 'Standard Job');
             }
         });
@@ -153,6 +162,10 @@ class JobController {
         if (!this._hasActiveJob()) return;
         const btn = document.getElementById('pause-job-btn');
         if (!btn) return;
+        if (window.ws.duet) {
+            window.ws.sendRealtime(window.ws.duetState === 'A' ? '~' : '!');
+            return;
+        }
         this.gcodeStreamer.paused = !this.gcodeStreamer.paused;
 
         if (this.gcodeStreamer.paused) {
@@ -176,8 +189,60 @@ class JobController {
         }
     }
 
+    async recoverDuetJob() {
+        const ws = window.ws;
+        const duet = ws.duet;
+        if (!duet || ws.duetState !== 'I' || this._hasActiveJob()) return;
+        try {
+            let first = 0;
+            let found = false;
+            do {
+                const page = await duet.call('filelist', { dir: '0:/sys', first });
+                if (ws.duet !== duet) return;
+                found = page.files.some(file => file.name === 'resurrect.g' && file.type === 'f');
+                if (found || !page.next) break;
+                if (page.next <= first) throw new Error('Invalid Duet file list continuation');
+                first = page.next;
+            } while (true);
+            if (!found) {
+                window.reporter.showAlert('Power Loss Resume', 'The Duet has no saved recovery file.');
+                return;
+            }
+            if (ws.duet !== duet) return;
+            window.reporter.showConfirm('Power Loss Resume',
+                'Resume the saved job? The controller may move the machine and restart the spindle.', async () => {
+                    if (ws.duet !== duet || ws.duetState !== 'I' || this._hasActiveJob()) return;
+                    try {
+                        await duet.send('M916');
+                    } catch (error) {
+                        ws.emit('error', error);
+                    }
+                });
+        } catch (error) {
+            ws.emit('error', error);
+        }
+    }
+
     stopJob() {
         if (!this._hasActiveJob()) return;
+        const duet = window.ws.duet;
+        if (duet) {
+            window.reporter.showConfirm('Stop Job', 'Stop the paused SD job?', async () => {
+                try {
+                    if (window.ws.duet !== duet) return;
+                    const status = await duet.call('status', { type: 1 });
+                    if (window.ws.duet !== duet) return;
+                    if (status.status !== 'A') {
+                        window.showToast?.('Pause the job before stopping it.', 'triangle-alert', 'error');
+                        return;
+                    }
+                    await window.ws.sendCommand('M0 H1');
+                } catch (error) {
+                    window.term.writeln(error.message);
+                }
+            });
+            return;
+        }
         window.reporter.showConfirm('Stop Job', 'Stop Job? This will reset the machine.', () => {
             window.ws.sendRealtime('\x18');
             if (this.gcodeStreamer.active) {

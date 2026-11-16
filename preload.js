@@ -9,5 +9,6 @@ contextBridge.exposeInMainWorld('electron', {
     getNetworkInfo: () => ipcRenderer.invoke('get-network-info'),
     loadGCode: () => ipcRenderer.invoke('load-gcode-dialog'),
     onOpenFile: (callback) => ipcRenderer.on('open-file', (event, filePath) => callback(filePath)),
+    duetRequest: (url, options) => ipcRenderer.invoke('duet-request', url, options),
     isElectron: true
 });

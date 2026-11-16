@@ -129,7 +129,7 @@ export class GrblSettings {
     }
 
     _fetchSettings() {
-        if (!this.ws.isConnected || this.writing) return;
+        if (!this.ws.isConnected || this.ws.duet || this.ws.isDuetSerial || this.writing) return;
         this.term.writeln(`\x1b[34m> Discovering ${this.ws.isGrblHAL ? 'grblHAL' : 'Grbl'} Settings...\x1b[0m`);
 
         // Reset Logic
@@ -761,7 +761,7 @@ export class GrblSettings {
     }
 
     _updateSaveButton() {
-        const btn = document.querySelector('#settings-view .btn-primary');
+        const btn = document.querySelector('#settings-toolbar .btn-primary');
         if (!btn) return;
         const count = Object.keys(this.pendingChanges).length;
         btn.innerHTML = count > 0

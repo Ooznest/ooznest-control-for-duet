@@ -93,7 +93,12 @@ class JoggingController {
         const distSelect = document.getElementById('stepSize');
         if (!toggle || !distSelect) return;
 
-        window.store.set('jog.continuous', toggle.checked);
+        if (window.ws?.duet || window.ws?.isDuetSerial) {
+            toggle.checked = false;
+            toggle.disabled = true;
+        } else {
+            window.store.set('jog.continuous', toggle.checked);
+        }
         distSelect.disabled = toggle.checked || !(window.ws && window.ws.isConnected);
     }
 

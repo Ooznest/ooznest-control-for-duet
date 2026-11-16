@@ -1945,22 +1945,22 @@ body {
     min-height: 0;
 }
 
-#settings-sidebar {
+:is(#settings-sidebar, #duet-settings-sidebar) {
     background: transparent !important;
 }
 
-#settings-sidebar > div:first-child {
+:is(#settings-sidebar, #duet-settings-sidebar) > div:first-child {
     background: transparent !important;
 }
 
-#settings-sidebar .settings-sidebar-search-card {
+:is(#settings-sidebar, #duet-settings-sidebar) .settings-sidebar-search-card {
     background: var(--oz-teal-brand);
     color: #ffffff;
     border-radius: 24px 0 0 0;
     padding: 18px 16px 16px;
 }
 
-#settings-sidebar .settings-sidebar-search-label {
+:is(#settings-sidebar, #duet-settings-sidebar) .settings-sidebar-search-label {
     display: block;
     font-weight: 700;
     font-size: 11px;
@@ -1974,7 +1974,7 @@ body {
     max-width: min(96vw, 820px) !important;
 }
 
-#settings-sidebar .settings-nav-item {
+:is(#settings-sidebar, #duet-settings-sidebar) .settings-nav-item {
     background: #ffffff;
     color: var(--oz-teal-brand);
     border: 1px solid rgba(68, 157, 159, 0.10);
@@ -1983,7 +1983,7 @@ body {
     cursor: pointer;
 }
 
-#settings-sidebar .settings-nav-item:hover {
+:is(#settings-sidebar, #duet-settings-sidebar) .settings-nav-item:hover {
     background: #ffffff;
     color: var(--oz-teal-brand);
     border-color: rgba(68, 157, 159, 0.18);
@@ -1991,30 +1991,30 @@ body {
     box-shadow: none;
 }
 
-#settings-sidebar .settings-nav-item.is-active {
+:is(#settings-sidebar, #duet-settings-sidebar) .settings-nav-item.is-active {
     background: var(--oz-primary);
     color: #ffffff;
     border-color: var(--oz-primary);
     box-shadow: none;
 }
 
-#settings-sidebar .settings-nav-item.is-active:hover {
+:is(#settings-sidebar, #duet-settings-sidebar) .settings-nav-item.is-active:hover {
     background: var(--oz-primary);
     color: #ffffff;
     border-color: var(--oz-primary);
 }
 
-#settings-sidebar .settings-nav-badge {
+:is(#settings-sidebar, #duet-settings-sidebar) .settings-nav-badge {
     background: var(--oz-primary);
     color: #ffffff;
 }
 
-#settings-sidebar .settings-nav-item.is-active .settings-nav-badge {
+:is(#settings-sidebar, #duet-settings-sidebar) .settings-nav-item.is-active .settings-nav-badge {
     background: #ffffff;
     color: var(--oz-primary-dark);
 }
 
-#settings-search-input {
+:is(#settings-search-input, #duet-settings-search) {
     border-radius: var(--oz-r-control) !important;
     border-color: rgba(255, 255, 255, 0.22) !important;
     background: #fff !important;
@@ -2024,7 +2024,7 @@ body {
 }
 
 
-#settings-main-panel .bg-grey-bg,
+:is(#settings-main-panel, #duet-settings-main-panel) .bg-grey-bg,
 #tools-view .bg-grey-bg,
 #troubleshooting-view .bg-grey-bg,
 #connection-modal #discover-panel,
@@ -2035,7 +2035,7 @@ body {
     border-color: rgba(68, 157, 159, 0.14) !important;
 }
 
-#settings-main-panel table,
+:is(#settings-main-panel, #duet-settings-main-panel) table,
 #tools-view table,
 #sd-table {
     border-collapse: separate;
@@ -2056,7 +2056,7 @@ body {
     width: 120px;
 }
 
-#settings-main-panel thead th,
+:is(#settings-main-panel, #duet-settings-main-panel) thead th,
 #tools-view thead th,
 #sd-table thead th {
     background: #ffffff !important;
@@ -2071,13 +2071,13 @@ body {
     box-shadow: none !important;
 }
 
-#settings-main-panel tbody tr,
+:is(#settings-main-panel, #duet-settings-main-panel) tbody tr,
 #tool-table-body tr,
 #sd-table tbody tr {
     transition: background-color 0.18s ease, transform 0.18s ease;
 }
 
-#settings-main-panel tbody tr:hover,
+:is(#settings-main-panel, #duet-settings-main-panel) tbody tr:hover,
 #tool-table-body tr:hover,
 #sd-table tbody tr:hover {
     background: rgba(68, 157, 159, 0.05) !important;
@@ -2087,13 +2087,13 @@ body {
     background: transparent !important;
 }
 
-#settings-main-panel tbody tr.bg-yellow-50 {
+:is(#settings-main-panel, #duet-settings-main-panel) tbody tr.bg-yellow-50 {
     background: rgba(255, 242, 207, 0.82) !important;
 }
 
-#settings-main-panel .group button,
-#settings-sidebar button,
-#settings-main-panel button,
+:is(#settings-main-panel, #duet-settings-main-panel) .group button,
+:is(#settings-sidebar, #duet-settings-sidebar) button,
+:is(#settings-main-panel, #duet-settings-main-panel) button,
 #macro-icon-grid button {
     transition:
         transform 0.18s ease,
@@ -2254,7 +2254,7 @@ body {
         border-radius: 14px;
     }
 
-    #settings-main-panel table,
+    :is(#settings-main-panel, #duet-settings-main-panel) table,
     #tools-view table,
     #sd-table {
         font-size: 11px;

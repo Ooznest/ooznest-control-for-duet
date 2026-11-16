@@ -1,3 +1,4 @@
+import { DuetHttp, duetCommand, duetProbeRoutine, duetCornerProbeRoutine, duetOutsideCornerRoutine } from './duet-http.mjs';
 import { GrblFlowControl } from './grbl-flow-control.js?v=20261016';
 import { registerModal } from '../ui/modal.js';
 
@@ -20,8 +21,8 @@ export class ConnectionManager {
         this._scanning = false;
         this._cordovaTelnetSocketId = null;
         this._isConnecting = false;
-        // Direct connection mode — skip the connect modal entirely
-        this._isDirectMode = !this.hasBackend && !this.isCordova;
+        // Direct connection mode â€” skip the connect modal entirely
+        this._isDirectMode = false;
 
         this.listeners = {
             connect: [],
@@ -83,6 +84,12 @@ export class ConnectionManager {
         if (saved) {
             if (saved.webserialBaud && document.getElementById('baud-webserial')) document.getElementById('baud-webserial').value = saved.webserialBaud;
             if (saved.usbBaud && document.getElementById('baud-node')) document.getElementById('baud-node').value = saved.usbBaud;
+            const interval = document.getElementById('duet-poll-interval');
+            if (interval && Number.isFinite(saved.duetPollInterval)) {
+                interval.value = saved.duetPollInterval;
+                if (interval.checkValidity()) this.duetPollInterval = interval.valueAsNumber;
+                else interval.value = interval.defaultValue;
+            }
             if (saved.telnetIp && document.getElementById('ip-telnet')) document.getElementById('ip-telnet').value = saved.telnetIp;
             if (saved.telnetPort && document.getElementById('port-telnet')) document.getElementById('port-telnet').value = saved.telnetPort;
             if (saved.websocketUrl && document.getElementById('url-websocket')) {
@@ -107,10 +114,18 @@ export class ConnectionManager {
         // Initialize WebSerial listeners
         this.webSerial.on('connect', () => this.handleConnect());
         this.webSerial.on('disconnect', () => this.handleDisconnect());
-        this.webSerial.on('line', (line) => this.emit('line', line));
+        this.webSerial.on('line', line => this.handleSerialLine(line));
         this.webSerial.on('error', (err) => this.emit('error', err));
-        this.webSerial.on('sent', (line) => this.emit('sent', line));
-        this.webSerial.on('command-result', (result) => this.emit('command-result', result));
+        this.webSerial.on('sent', line => {
+            if (!/^M587\s/i.test(line)) this.emit('sent', line);
+        });
+        this.webSerial.on('command-result', (result) => {
+            if (result.command === 'M408 S0') this.duetSerialPollPending = false;
+            if (this.isDuetSerial && /^G5[4-9]$/i.test(result.command)) {
+                this.sendCommand('M409 K"move.workplaceNumber"').catch(error => this.emit('error', error));
+            }
+            this.emit('command-result', result);
+        });
 
         // Always listen for deviceready - cordova.js loads asynchronously
         // so window.cordova is not defined at constructor time.
@@ -203,6 +218,7 @@ export class ConnectionManager {
                 usbPort: document.getElementById('port-node')?.value,
                 usbBaud: document.getElementById('baud-node')?.value,
                 telnetIp: document.getElementById('ip-telnet')?.value,
+                duetPollInterval: this.duetPollInterval,
                 telnetPort: document.getElementById('port-telnet')?.value,
                 websocketUrl: document.getElementById('url-websocket')?.value
             };
@@ -240,13 +256,17 @@ export class ConnectionManager {
     }
 
     toggleModal() {
+        if (this.isBrowserRuntime && !this.isConnected && !this._isDirectMode) {
+            this.setConnectionType('webserial');
+            return this.connect();
+        }
         if (!this.modalController) return;
         // In direct mode only allow closing, never opening the modal
         if (this._isDirectMode && !this.modalController.isOpen()) return;
         this.modalController.toggle();
 
         if (this.modalController.isOpen()) {
-            // On native shells the WebSerial/WebSocket tabs are hidden — never
+            // On native shells the WebSerial/WebSocket tabs are hidden â€” never
             // leave the modal highlighting a hidden tab. Coerce to USB.
             if ((this.isElectron || this.isCordova) && (this.type === 'webserial' || this.type === 'websocket')) {
                 this.type = 'usb';
@@ -315,11 +335,7 @@ export class ConnectionManager {
         });
 
         if (type === 'usb' && this.isElectron) {
-            if (!this.backendWs) {
-                this.connectToBackend().then(() => this.refreshNodePorts()).catch(() => {});
-            } else {
-                this.refreshNodePorts();
-            }
+            this.refreshNodePorts().catch(() => {});
         }
 
         this.saveSettings();
@@ -354,14 +370,14 @@ export class ConnectionManager {
                     reject(new Error('connection failed'));
                 };
             });
-            // Probe succeeded — we're in SD card mode
+            // Probe succeeded â€” we're in SD card mode
             this.setConnectionType('websocket');
             const wsUrlInput = document.getElementById('url-websocket');
             if (wsUrlInput) wsUrlInput.value = url;
             this.httpBaseUrl = window.location.origin;
             setTimeout(() => this.connect(), 300);
         } catch {
-            // Probe failed — regular web mode, stay on webserial
+            // Probe failed â€” regular web mode, stay on webserial
         }
     }
 
@@ -370,7 +386,7 @@ export class ConnectionManager {
         this._connecting = new Promise((resolve, reject) => {
             // If hostname is empty (e.g., file:// or some edge cases), default to localhost
             const host = window.location.hostname || 'localhost';
-            const port = 8081;
+            const port = this.isElectron ? window.location.port : '8081';
             const wsUrl = `ws://${host}:${port}`;
 
             console.log("Remote Mirror: Syncing with backend at", wsUrl);
@@ -416,12 +432,12 @@ export class ConnectionManager {
                 this.CordovaSocket = window.Socket;
                 console.log("Cordova TCP Socket Plugin Ready (global)");
             } else {
-                console.log("Cordova TCP Socket plugin not available — Telnet will be disabled");
+                console.log("Cordova TCP Socket plugin not available â€” Telnet will be disabled");
             }
         }
 
         if (!window.serial) {
-            console.warn("Cordova Serial plugin not available — USB disabled");
+            console.warn("Cordova Serial plugin not available â€” USB disabled");
             return;
         }
 
@@ -442,7 +458,7 @@ export class ConnectionManager {
                         const trimmed = line.trim();
                         if (trimmed) {
                             this.flowControl.processLine(trimmed);
-                            this.emit('line', trimmed);
+                            this.handleSerialLine(trimmed);
                         }
                     });
                 }
@@ -505,7 +521,8 @@ export class ConnectionManager {
                         if (trimmed) {
                             // Update flow control
                             this.flowControl.processLine(trimmed);
-                            this.emit('line', trimmed);
+                            if (this.type === 'usb') this.handleSerialLine(trimmed);
+                            else this.emit('line', trimmed);
                         }
                     });
                 }
@@ -585,6 +602,7 @@ export class ConnectionManager {
     }
 
     async refreshNodePorts() {
+        if (this._connecting) await this._connecting;
         if (!this.backendWs) await this.connectToBackend();
         if (this.backendWs && this.backendWs.readyState === WebSocket.OPEN) {
             this.backendWs.send(JSON.stringify({ type: 'listPorts' }));
@@ -635,11 +653,27 @@ export class ConnectionManager {
     }
 
     async connect() {
+        if (this.type === 'telnet') return this.connectDuet();
+
         this.saveSettings();
         
         if (this.type === 'webserial') {
+            if (this.isConnecting || this.isConnected) return;
             const baud = parseInt(document.getElementById('baud-webserial').value);
-            await this.webSerial.connect(baud);
+            this._setConnectingState(true);
+            try {
+                await this.webSerial.connect(baud);
+                this.modalController.hide();
+            } catch (error) {
+                const message = error.name === 'NotFoundError'
+                    ? 'No serial port selected. Choose the Duet USB port to connect.'
+                    : error.name === 'SecurityError' || !navigator.serial
+                        ? 'USB access is unavailable here. Open this page directly in Chrome or Edge, or use the desktop app.'
+                        : `Could not open the Duet USB port: ${error.message}`;
+                window.showToast?.(message, 'plug-zap', 'error');
+            } finally {
+                this._setConnectingState(false);
+            }
         } else if (this.type === 'usb') {
             if (!this.backendWs && !this.isCordova) await this.connectToBackend();
             const portEl = document.getElementById('port-node');
@@ -655,9 +689,9 @@ export class ConnectionManager {
                     this.emit('error', new Error("USB serial plugin not available. Reinstall the app or use WiFi/Ethernet instead."));
                     return;
                 }
-                // Supported devices: STM32 + ESP32-S3 (native CDC-ACM) and FTDI bridges.
                 // vid/pid are decimal; driver must match the chip (native default is CdcAcm).
                 const supportedDevices = [
+                    { vid: 7504, pid: 24812, name: 'Duet USB' },
                     { vid: 1155, pid: 22336, name: 'STM32' },
                     { vid: 12346, pid: 16385, name: 'ESP32-S3' },
                     { vid: 1027, pid: 24577, name: 'FTDI', driver: 'FtdiSerialDriver' }
@@ -957,7 +991,683 @@ export class ConnectionManager {
         });
     }
 
+    handleSerialLine(line) {
+        if (this.isDuetSerial) {
+            const address = /^(?:Network is enabled,.*actual IP address:|Network running, IP address\s*=)\s*((?:\d{1,3}\.){3}\d{1,3})\s*$/i.exec(line)?.[1];
+            const input = document.getElementById('ip-telnet');
+            if (address === '0.0.0.0' && /configured IP address:\s*0\.0\.0\.0/i.test(line)) {
+                this.emit('line', 'Duet is waiting for a DHCP address. Check the network cable and router, then select Duet Network Info again.');
+            }
+            if (address && address !== '0.0.0.0' && input && !input.value.trim()) {
+                input.value = address;
+                this.saveSettings();
+            }
+        }
+        if (/^FIRMWARE_NAME:\s*RepRapFirmware/i.test(line)) {
+            this.isDuetSerial = true;
+            this.duetFirmwareInfo = {
+                version: /FIRMWARE_VERSION:\s*(\S+)/i.exec(line)?.[1],
+                board: /ELECTRONICS:\s*(.*?)(?:\s+FIRMWARE_DATE:|$)/i.exec(line)?.[1]
+            };
+            window.sdMounted = false;
+            window.syncSdUploadBtn?.();
+            window.uiManager?.syncFirmwareUI('duet');
+            this.sendCommand('M409 K"move.workplaceNumber"').catch(error => this.emit('error', error));
+        }
+        if (this.isDuetSerial && line.startsWith('{')) {
+            let status;
+            try { status = JSON.parse(line); } catch { /* Console output */ }
+            if (status?.key === 'move.workplaceNumber') { this.updateDuetWorkplace(status.result); return; }
+            if (status?.status && Array.isArray(status.machine) && Array.isArray(status.pos)) {
+                if (this.type !== 'webserial') this.duetSerialPollPending = false;
+                this.updateDuetStatus({ ...status, coords: { machine: status.machine, xyz: status.pos } });
+                return;
+            }
+        }
+        this.emit('line', line);
+    }
+
+    async connectDuet() {
+        if (this.isConnecting || this.isConnected) return;
+        this._setConnectingState(true);
+        let client;
+        let sessionOpened = false;
+        try {
+            const request = window.electron?.duetRequest ? async (url, options) => {
+                const { signal, ...serializable } = options;
+                const { status, body } = await window.electron.duetRequest(url, serializable);
+                return new Response(body, { status });
+            } : async (url, options) => {
+                try {
+                    return await fetch(url, options);
+                } catch (error) {
+                    if (!(error instanceof TypeError)) throw error;
+                    const alternative = this.isCordova ? 'Try USB in the Android app.' : 'Try USB with Web Serial.';
+                    throw new Error(
+                        'The app could not reach the Duet over HTTP. Check the address and the controller’s allowed web origin. ' +
+                        'Electron supports direct HTTP. ' + alternative,
+                        { cause: error }
+                    );
+                }
+            };
+            const address = document.getElementById('ip-telnet').value.trim();
+            if (!address) throw new Error('Enter the Duet address before connecting over HTTP.');
+            client = new DuetHttp(address, request);
+            await client.connect(document.getElementById('duet-password').value || 'reprap');
+            sessionOpened = true;
+            const status = await client.call('status', { type: 2 });
+            if (!status.coords?.machine || !status.coords?.xyz) throw new Error('Duet did not return machine coordinates');
+            this.duetFirmwareInfo = {
+                version: status.firmwareVersion,
+                board: status.firmwareName,
+                machineConfig: status.name
+            };
+            this.duet = client;
+            this.saveSettings();
+            this.modalController.hide();
+            this.handleConnect();
+            this.updateDuetStatus(status);
+            this.pollDuet(client);
+        } catch (error) {
+            if (sessionOpened && this.duet === client) {
+                this.disconnect();
+            } else if (sessionOpened) {
+                await client.call('disconnect').catch(() => {});
+            }
+            this._setConnectingState(false);
+            this.emit('error', error);
+        }
+    }
+
+    updateDuetStatus(status) {
+        this.duetState = status.status;
+        document.getElementById('duet-recover-job').disabled = !this.duet || status.status !== 'I';
+        const offsetZ = status.params?.babystep ?? status.babystep;
+        document.getElementById('duet-z-offset').textContent = Number.isFinite(offsetZ) ? offsetZ.toFixed(3) + ' mm' : '—';
+        for (const button of document.querySelectorAll('#duet-z-adjustment button')) {
+            button.disabled = !['I', 'P'].includes(this.duetState) || !Number.isFinite(offsetZ);
+        }
+
+        if (Number.isInteger(status.mountedVolumes)) {
+            const mounted = Boolean(status.mountedVolumes & 1);
+            if (window.sdMounted !== mounted) {
+                window.sdMounted = mounted;
+                window.syncSdUploadBtn?.();
+            }
+        }
+        document.getElementById('duet-restart').hidden = status.status !== 'S';
+        const state = { I: 'Idle', O: 'Off', P: 'Run', A: 'Hold:0', D: 'Hold:1', H: 'Alarm', S: 'Alarm', B: 'Run' }[status.status] || 'Unknown';
+        const { machine, xyz } = status.coords;
+        const offset = machine.map((value, index) => value - xyz[index]);
+        const feed = status.speeds?.requested ?? 0;
+        const override = status.params?.speedFactor ?? status.sfactor;
+        if (Number.isFinite(override)) this.duetFeedOverride = override;
+        const overrideField = Number.isFinite(override) ? '|Ov:' + override : '';
+        const homed = status.coords.axesHomed ?? status.homed;
+        const homingField = Array.isArray(homed)
+            ? '|H:1,' + homed.slice(0, 6).reduce((mask, value, index) => mask | ((value ? 1 : 0) << index), 0)
+            : '';
+        const probe = status.sensors?.probeValue ?? status.probe;
+        const threshold = status.probe?.threshold;
+        let probeField = '';
+        if (status.probe?.type && Number.isFinite(probe) && Number.isFinite(threshold)) {
+            probeField = '|Pn:' + (probe >= threshold ? 'P' : '');
+        } else if (this.isDuetSerial && /^(0|1000)$/.test(String(probe))) {
+            probeField = '|Pn:' + (Number(probe) === 1000 ? 'P' : '');
+        }
+        this.duetProbeKnown = probeField !== '';
+        this.emit('line', '<' + state + '|MPos:' + machine.join(',') + '|WCO:' + offset.join(',') + '|FS:' + feed + ',0' + overrideField + homingField + probeField + '>');
+    }
+
+    async readDuetNetwork() {
+        if (!this.isConnected || !this.isDuetSerial || this.duetAxisWrite) return;
+        const generation = this._connectionGeneration;
+        const fields = document.getElementById('duet-network-form').elements;
+        try {
+            const network = await this.readDuetSerialModel('network');
+            if (this._connectionGeneration !== generation) return;
+            const link = network?.interfaces?.[0];
+            fields.hostname.placeholder = network?.hostname || '';
+            fields.address.placeholder = link?.actualIP || '';
+            fields.gateway.placeholder = link?.gateway || '';
+            fields.netmask.placeholder = link?.subnet || '';
+        } catch {
+            // The USB connection can still be used to enter new settings.
+        }
+    }
+
+    saveDuetNetwork(form) {
+        const firmware = this.duetFirmwareInfo;
+        const board = firmware?.board || '';
+        const wifi = /Duet(?: 2)? WiFi\b/i.test(board);
+        if (!this.isConnected || !this.isDuetSerial || !(wifi || /Duet Ethernet/i.test(board))) return;
+        const { enabled, mode, ssid, password, address, gateway, netmask, hostname } = form.elements;
+        const state = enabled.value;
+        const modeValue = mode.value;
+        const ip = address.value.trim();
+        const network = wifi ? ssid.value : '';
+        const secret = wifi ? password.value : '';
+        const configureWifi = wifi && !!(network || secret || modeValue);
+        const router = gateway.value.trim();
+        const mask = netmask.value.trim();
+        const host = hostname.value.trim();
+        const validIp = value => /^(?:(?:0|[1-9]\d{0,2})\.){3}(?:0|[1-9]\d{0,2})$/.test(value) &&
+            value.split('.').every(octet => Number(octet) <= 255);
+        if (state !== '0' && modeValue === 'static' && (!validIp(ip) || ip === '0.0.0.0')) {
+            window.reporter.showAlert('Network Settings', 'Enter a valid static IPv4 address.');
+            return;
+        }
+        if (host && !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(host)) {
+            window.reporter.showAlert('Network Settings', 'Enter a hostname using letters, numbers, and hyphens.');
+            return;
+        }
+        if (state !== '0' && (router || mask) &&
+            (modeValue !== 'static' || (router && !validIp(router)) || (mask && !validIp(mask)))) {
+            window.reporter.showAlert('Network Settings', 'Select Static and enter valid IPv4 values for the gateway and netmask.');
+            return;
+        }
+        if (state !== '0' && configureWifi &&
+            (!network || !secret || !modeValue || /[";\x00-\x1f\x7f]/.test(network + secret))) {
+            window.reporter.showAlert('Wi-Fi Settings', 'Enter an SSID and password without quotation marks or semicolons, and select an address mode.');
+            return;
+        }
+        if (!state && !modeValue && !configureWifi && !host) return;
+        const message = state === '0' ? 'Disable this network interface?' :
+            configureWifi ? 'Save this Wi-Fi network on the Duet and connect to it?' :
+            modeValue === 'dhcp' ? 'Use DHCP for this session? The HTTP address field will be cleared until the Duet reports an address.' :
+            modeValue === 'static' ? 'Use ' + ip + ' and the selected network settings for this session?' :
+            state ? 'Enable networking with the settings already on the controller?' : 'Apply the hostname for this session?';
+        window.reporter.showConfirm('Apply Network Settings', message, async () => {
+            if (!this.isConnected || !this.isDuetSerial || this.duetFirmwareInfo !== firmware) return;
+            password.value = '';
+            const httpAddress = document.getElementById('ip-telnet');
+            httpAddress.value = '';
+            this.saveSettings();
+            window.switchTab('console-view');
+            try {
+                if (host) await this.sendCommand('M550 P"' + host + '"');
+                if (state === '0') {
+                    await this.sendCommand('M552 S0');
+                    return;
+                }
+                if (configureWifi) {
+                    const send = async command => {
+                        if (!this.isConnected || !this.isDuetSerial || this.duetFirmwareInfo !== firmware) {
+                            throw new Error('Controller changed');
+                        }
+                        const result = await this.sendCommandWithAck(command);
+                        if (!/^ok\b/i.test(result.response)) throw new Error('Command rejected');
+                    };
+                    const staticOptions = modeValue === 'static' ?
+                        ' I' + ip + (router ? ' J' + router : '') + (mask ? ' K' + mask : '') : '';
+                    await send('M552 S0');
+                    await send('M587 S"' + network + '" P"' + secret + '"' + staticOptions);
+                    await send('M552 S1 P"' + network + '"');
+                } else if (state || modeValue) {
+                    const target = modeValue === 'dhcp' ? ' P0.0.0.0' : modeValue === 'static' ? ' P' + ip : '';
+                    await this.sendCommand('M552 S1' + target);
+                    if (mask) await this.sendCommand('M553 P' + mask);
+                    if (router) await this.sendCommand('M554 P' + router);
+                }
+                await this.sendCommand('M552');
+            } catch {
+                this.emit('error', new Error('The Duet did not confirm the network settings. Check the connection and try again.'));
+            }
+        });
+    }
+
+    probeDuetAxis(form, panel) {
+        if (this.duetProbePending) return;
+        const duet = this.duet;
+        const [height, offset, feed] = ['height', 'offset', 'feed'].map(name => panel?.[name] ?? form?.elements[name]?.valueAsNumber);
+        const direction = panel?.direction ?? form?.elements.direction?.value ?? 'Z-';
+        const axis = direction[0];
+        const corner = panel?.corner ?? form?.elements.corner?.value;
+        const geometry = Object.fromEntries(['width', 'depth', 'xOffset', 'yOffset', 'diameter'].map(
+            name => [name, form?.elements[name]?.valueAsNumber]
+        ));
+        const side = axis !== 'Z';
+        const travel = panel?.travel ?? (side ? form?.elements.distance?.valueAsNumber : height - offset + 10);
+        const sign = direction[1] === '-' ? -1 : 1;
+        const title = corner ? 'Probe Corner' : 'Probe ' + axis;
+        const reporter = window.reporter;
+        if (!duet) {
+            reporter.showAlert('Duet Z Probe', 'Connect to the Duet over HTTP to run the probe.');
+            return;
+        }
+        if (!panel && corner && (!['FL', 'FR', 'BL', 'BR'].includes(corner) ||
+            !Object.values(geometry).every(Number.isFinite) || geometry.diameter <= 0 ||
+            geometry.xOffset < 0 || geometry.xOffset >= geometry.width ||
+            geometry.yOffset < 0 || geometry.yOffset >= geometry.depth)) {
+            reporter.showAlert(title, 'Enter the block dimensions, edge offsets within those dimensions, and a positive cutter diameter.');
+            return;
+        }
+        if (!['X+', 'X-', 'Y+', 'Y-', 'Z-'].includes(direction) ||
+            ![travel, offset, feed].every(Number.isFinite) || travel <= 0 || feed <= 0 ||
+            (!panel && !side && (height <= 0 || offset < 0 || offset > height)) ||
+            (panel && (!Number.isFinite(panel.retract) || panel.retract <= 0))) {
+            if (side) {
+                reporter.showAlert(title, 'Enter a positive travel and feed, and the work coordinate at contact.');
+                return;
+            }
+            reporter.showAlert('Duet Z Probe', 'Enter a positive block height and feed. The Z offset at contact must be between zero and the block height.');
+            return;
+        }
+        const approach = side ? direction : 'down';
+        const message = corner
+            ? `Confirm the probe is connected and the tool is positioned as shown for corner ${corner}. This replaces /sys/probe.g and moves Z, X, and Y at ${feed} mm/min.`
+            : `Confirm the block is connected and the tool is positioned for probing. This replaces /sys/probe.g and probes ${approach} up to ${travel} mm at ${feed} mm/min, setting ${axis} to ${offset} mm on contact.`;
+        reporter.showConfirm(title, message,
+            async () => {
+                if (this.duetProbePending || this.duet !== duet) return;
+                this.duetProbePending = true;
+                try {
+                    const checkProbe = async () => {
+                        const status = await duet.call('status', { type: 2 });
+                        const reading = status.sensors?.probeValue;
+                        const threshold = status.probe?.threshold;
+                        if (this.duet !== duet) throw new Error('Duet connection changed during probe setup.');
+                        if (status.status !== 'I' || !status.coords?.axesHomed?.[2]) {
+                            throw new Error('The Duet must be idle with Z homed before probing.');
+                        }
+                        if (side && !status.coords.axesHomed['XYZ'.indexOf(axis)]) {
+                            throw new Error(`Home ${axis} before probing this face.`);
+                        }
+                        if (corner && (!status.coords.axesHomed[0] || !status.coords.axesHomed[1])) {
+                            throw new Error('Home X and Y before probing a corner.');
+                        }
+                        if (status.currentTool !== -1 || status.tools?.some(tool => tool.number === 49)) {
+                            throw new Error('Probing requires no active tool and an unused tool slot 49.');
+                        }
+                        if (!status.probe?.type || !Number.isFinite(reading) || !Number.isFinite(threshold)) {
+                            throw new Error('The Duet did not report a configured probe input.');
+                        }
+                        if (reading >= threshold) throw new Error('The probe is already triggered.');
+                    };
+                    await checkProbe();
+                    const routine = corner
+                        ? panel ? duetOutsideCornerRoutine(panel)
+                            : duetCornerProbeRoutine({ ...geometry, corner, height, zOffset: offset, feed })
+                        : duetProbeRoutine(axis, sign * travel, feed, offset, -sign * (panel?.retract ?? 5));
+                    const name = '0:/sys/probe.g';
+                    await duet.call('upload', { name }, new TextEncoder().encode(routine));
+                    const saved = await duet.call('download', { name });
+                    if (new TextDecoder().decode(saved) !== routine) {
+                        throw new Error('The saved probe routine did not match. Probing was cancelled.');
+                    }
+                    await checkProbe();
+                    await duet.send('M98 P"probe.g"');
+                } catch (error) {
+                    this.emit('error', error);
+                } finally {
+                    this.duetProbePending = false;
+                }
+            });
+    }
+
+    async readDuetSpindles() {
+        const output = document.getElementById('duet-spindle-status');
+        const duet = this.duet;
+        if (!duet) {
+            output.textContent = 'Connect over HTTP to read spindle status.';
+            return;
+        }
+        try {
+            const { result } = await duet.call('model', { key: 'spindles', flags: 'v' });
+            if (this.duet !== duet) return;
+            const rows = result.flatMap((spindle, index) =>
+                spindle?.state && spindle.state !== 'unconfigured'
+                    ? ['Spindle ' + index + ': ' + spindle.state + ', ' + spindle.current + ' RPM (set ' + spindle.active + ' RPM)']
+                    : []
+            );
+            output.textContent = rows.join('\n') || 'No spindles configured.';
+        } catch (error) {
+            if (this.duet === duet) output.textContent = error.message;
+        }
+    }
+
+    refreshDuetAxes() {
+        if (this.duetAxisWrite) return;
+        if (document.querySelector('#duet-axis-rows [data-edited]')) {
+            const duet = this.duet;
+            window.reporter.showConfirm('Discard unsaved settings?',
+                'Refresh reloads controller values and discards your unsaved edits.',
+                () => { if (this.duet === duet) return this.readDuetAxes(); }, undefined, 'Discard and Refresh');
+            return;
+        }
+        return this.readDuetAxes();
+    }
+
+    updateDuetSaveButton() {
+        const poll = document.getElementById('duet-poll-interval');
+        document.getElementById('duet-save-settings').disabled = !!this.duetAxisWrite ||
+            (!document.querySelector('#duet-axis-rows [data-edited]') &&
+                poll.valueAsNumber === (this.duetPollInterval ?? 500));
+    }
+
+    setDuetAxisPreset(select) {
+        if (!select.value || !(this.duet || this.isDuetSerial) || this.duetAxisWrite) return;
+        const limits = select.value.split(',');
+        for (const input of document.querySelectorAll('#duet-axis-rows input')) {
+            const index = 'XYZ'.indexOf(input.dataset.axis);
+            if (index < 0 || input.dataset.key === 'stepsPerMm') continue;
+            input.value = input.dataset.key === 'min' ? '0' : limits[index];
+            input.oninput();
+        }
+        select.value = '';
+    }
+
+    saveDuetAxes() {
+        const duet = this.duet;
+        const serial = this.isDuetSerial && this.isConnected;
+        const generation = this._connectionGeneration;
+        const current = () => this.isConnected && this._connectionGeneration === generation && this.duet === duet;
+        const rows = document.getElementById('duet-axis-rows');
+        const output = document.getElementById('duet-axis-settings');
+        const save = document.getElementById('duet-save-settings');
+        const inputs = [...rows.querySelectorAll('input')];
+        const edits = inputs.filter(input => input.closest('tr').hasAttribute('data-edited'));
+        const poll = document.getElementById('duet-poll-interval');
+        const interval = poll.valueAsNumber;
+        if ((!duet && !serial) || this.duetAxisWrite || !poll.reportValidity()) return;
+        if (!edits.length) {
+            this.setDuetPollInterval(poll);
+            this.updateDuetSaveButton();
+            return;
+        }
+        for (const input of inputs) {
+            const { axis, key } = input.dataset;
+            const min = inputs.find(item => item.dataset.axis === axis && item.dataset.key === 'min');
+            const max = inputs.find(item => item.dataset.axis === axis && item.dataset.key === 'max');
+            if (!input.checkValidity() || (key === 'stepsPerMm' && input.valueAsNumber <= 0) ||
+                (min && max && min.valueAsNumber >= max.valueAsNumber)) {
+                output.textContent = 'Enter valid axis values. Steps per mm must be positive and minimum travel must be below maximum travel.';
+                return;
+            }
+        }
+        const changes = edits.map(input => ({ input, ...input.dataset, next: input.valueAsNumber }));
+        const extendsRange = ({ key, next, original }) =>
+            (key === 'min' && next < Number(original)) || (key === 'max' && next > Number(original));
+        changes.sort((a, b) => Number(extendsRange(b)) - Number(extendsRange(a)));
+        window.reporter.showConfirm('Save Duet Settings',
+            serial ? 'Apply the edited axis values for this session?' :
+                'Apply the edited axis values and save them to the WorkBee startup files?',
+            async () => {
+                if (!current() || this.duetAxisWrite ||
+                    poll.valueAsNumber !== interval ||
+                    changes.some(({ input, next }) => !input.isConnected || input.valueAsNumber !== next)) return;
+                const write = {};
+                this.duetAxisWrite = write;
+                save.disabled = true;
+                poll.disabled = true;
+                inputs.forEach(input => { input.disabled = true; });
+                try {
+                    const status = serial ? { status: this.duetState } : await duet.call('status', { type: 3 });
+                    if (status.status !== 'I' || status.filePosition > 0) {
+                        throw new Error('The Duet must be powered and idle to change axis settings.');
+                    }
+                    const files = serial ? [] : await this.prepareDuetAxisFiles(duet, changes);
+                    for (const [index, { input, axis, key, code, next }] of changes.entries()) {
+                        if (!current()) return;
+                        output.textContent = `Writing ${input.getAttribute('aria-label')} (${index + 1} of ${changes.length})…`;
+                        const command = code + ' ' + axis + next;
+                        if (serial) {
+                            const reply = await this.sendCommandWithAck(command);
+                            if (!/^ok\b/i.test(reply.response)) throw new Error('The Duet rejected ' + input.getAttribute('aria-label') + '.');
+                        } else {
+                            await duet.send(command);
+                        }
+                        let verified = false;
+                        for (let attempt = 0; attempt < 5 && current(); attempt++) {
+                            const result = serial ? await this.readDuetSerialModel('move.axes') :
+                                (await duet.call('model', { key: 'move.axes', flags: 'v' })).result;
+                            const live = result.find(item => item.letter === axis)?.[key];
+                            if (Number.isFinite(live) && Math.abs(live - next) < 0.0001) {
+                                if (serial && current()) {
+                                    input.dataset.original = String(next);
+                                    input.oninput();
+                                }
+                                verified = true;
+                                break;
+                            }
+                            await new Promise(resolve => setTimeout(resolve, 150));
+                        }
+                        if (!verified) throw new Error('Could not verify ' + input.getAttribute('aria-label') + '. Refresh before retrying.');
+                    }
+                    for (const [index, { name, original, updated, edits }] of files.entries()) {
+                        output.textContent = `Saving ${name.split('/').pop()} (${index + 1} of ${files.length})…`;
+                        const read = async () => new TextDecoder().decode(await duet.call('download', { name }));
+                        if (await read() !== original) throw new Error(name + ' changed during Save. Review it before retrying.');
+                        if (!current()) return;
+                        if (original !== updated) await duet.call('upload', { name }, new TextEncoder().encode(updated));
+                        if (!current()) return;
+                        if (await read() !== updated) throw new Error('Could not verify ' + name + '. Review it before retrying.');
+                        if (!current()) return;
+                        for (const { input, next } of edits) {
+                            input.dataset.original = String(next);
+                            input.oninput();
+                        }
+                    }
+                    this.setDuetPollInterval(poll);
+                    output.textContent = serial ? 'Axis settings verified for this session.' :
+                        'Settings verified on the controller and saved to the startup files.';
+                } catch (error) {
+                    if (current()) output.textContent = error.message;
+                } finally {
+                    if (this.duetAxisWrite === write) {
+                        this.duetAxisWrite = null;
+                        poll.disabled = false;
+                        inputs.forEach(input => { input.disabled = false; });
+                        this.updateDuetSaveButton();
+                    }
+                }
+            });
+    }
+
+    async prepareDuetAxisFiles(duet, changes) {
+        const files = [];
+        for (const [file, codes] of [
+            ['config-axes-limits.g', ['M208 S1', 'M208 S0']],
+            ['config-axes-calibration.g', ['M92']]
+        ]) {
+            const edits = changes.filter(change => codes.includes(change.code));
+            if (!edits.length) continue;
+            const name = '0:/sys/' + file;
+            const original = new TextDecoder().decode(await duet.call('download', { name }));
+            let updated = original;
+            for (const { axis, code, next } of edits) {
+                const command = code.split(' ')[0];
+                let matches = 0;
+                updated = updated.replace(new RegExp('^([ \\t]*' + command + '[ \\t]+)([^;\\r\\n]*)([^\\r\\n]*)', 'gim'),
+                    (line, prefix, parameters, comment) => {
+                        if (command === 'M208') {
+                            const mode = parameters.match(/(?:^|\s)S([01])(?=\s|$)/i)?.[1] ?? '0';
+                            if (mode !== code.at(-1)) return line;
+                        }
+                        const parameter = new RegExp('(^|[ \\t])' + axis + '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?=[ \\t]|$)', 'gi');
+                        return prefix + parameters.replace(parameter, (_, separator) => {
+                            matches++;
+                            return separator + axis + next;
+                        }) + comment;
+                    });
+                if (matches !== 1) throw new Error('Expected one ' + command + ' value for ' + axis + ' in ' + file + '.');
+            }
+            files.push({ name, original, updated, edits });
+        }
+        return files;
+    }
+
+    readDuetSerialModel(key) {
+        return new Promise((resolve, reject) => {
+            const finish = (error, result) => {
+                clearTimeout(timer);
+                this.off('line', onLine);
+                this.off('disconnect', onDisconnect);
+                if (error) reject(error);
+                else resolve(result);
+            };
+            const onLine = line => {
+                if (!line.startsWith('{')) return;
+                let reply;
+                try { reply = JSON.parse(line); } catch { return; }
+                if (reply.key === key) finish(null, reply.result);
+            };
+            const onDisconnect = () => finish(new Error('Duet disconnected.'));
+            const timer = setTimeout(() => finish(new Error('The Duet did not return ' + key + '.')), 3000);
+            this.on('line', onLine);
+            this.on('disconnect', onDisconnect);
+            this.sendCommand('M409 K"' + key + '" F"v"').catch(finish);
+        });
+    }
+
+    async readDuetAxes() {
+        if (this.duetAxisWrite) return;
+        const output = document.getElementById('duet-axis-settings');
+        const duet = this.duet;
+        const serial = this.isDuetSerial && this.isConnected;
+        const generation = this._connectionGeneration;
+        if (!duet && !serial) {
+            output.textContent = 'Connect to the Duet to read axis settings.';
+            return;
+        }
+        try {
+            const result = serial ? await this.readDuetSerialModel('move.axes') :
+                (await duet.call('model', { key: 'move.axes', flags: 'v' })).result;
+            if (this._connectionGeneration !== generation) return;
+            const primaryAxes = ['X', 'Y', 'Z'].map(letter => result.find(axis => axis.letter === letter));
+            if (window.troubleshooting?.lastHomingMask == null &&
+                primaryAxes.every(axis => typeof axis?.homed === 'boolean')) {
+                const homingMask = primaryAxes.reduce((mask, axis, index) => mask | (Number(axis.homed) << index), 0);
+                window.troubleshooting?.updateHoming(homingMask);
+            }
+            const rows = document.getElementById('duet-axis-rows');
+            rows.replaceChildren();
+            for (const axis of result) {
+                if (!/^[A-Z]$/.test(axis.letter)) continue;
+                for (const [key, code, label, unit] of [
+                    ['min', 'M208 S1', 'Minimum travel', 'mm'],
+                    ['max', 'M208 S0', 'Maximum travel', 'mm'],
+                    ['stepsPerMm', 'M92', 'Steps per mm', 'steps/mm']
+                ]) {
+                    const gangedY = axis.letter === 'U' && axis.visible === false && result.some(item => item.letter === 'Y');
+                    if (!Number.isFinite(axis[key]) || (gangedY && key !== 'stepsPerMm')) continue;
+                    const row = document.getElementById('duet-axis-row').content.firstElementChild.cloneNode(true);
+                    const [command, description, value, units] = row.cells;
+                    command.textContent = code.split(' ')[0];
+                    row.dataset.duetAxisGroup = (gangedY ? 'Y' : axis.letter) + '-axis';
+                    description.textContent = gangedY ? 'Ganged Y-motor travel resolution' :
+                        axis.letter + (key === 'stepsPerMm' ? '-axis travel resolution' : '-axis ' + label.toLowerCase());
+                    units.textContent = unit;
+                    const input = value.querySelector('input');
+                    input.value = axis[key];
+
+                    input.dataset.original = input.value;
+                    Object.assign(input.dataset, { axis: axis.letter, key, code });
+                    input.setAttribute('aria-label', description.textContent);
+                    input.oninput = () => {
+                        const edited = input.valueAsNumber !== Number(input.dataset.original);
+                        row.toggleAttribute('data-edited', edited);
+                        row.classList.toggle('bg-yellow-50', edited);
+                        this.updateDuetSaveButton();
+                    };
+                    rows.append(row);
+                }
+            }
+            window.uiManager?.renderDuetSettingsGroup();
+            this.updateDuetSaveButton();
+            output.textContent = '';
+        } catch (error) {
+            output.textContent = error.message;
+        }
+    }
+
+    async adjustDuetZ(delta) {
+        if (!this.isConnected || !(this.duet || this.isDuetSerial) || !['I', 'P'].includes(this.duetState)) return;
+        if (delta !== -0.05 && delta !== 0.05) return;
+        try {
+            await this.sendCommand('M290 S' + delta);
+        } catch (error) {
+            this.emit('error', error);
+        }
+    }
+
+    async restartDuet() {
+        if (!this.isConnected || this.duetState !== 'S') return;
+        try {
+            await this.sendCommand('M999');
+        } catch (error) {
+            this.emit('error', error);
+        }
+    }
+
+    updateDuetWorkplace(number) {
+        const selector = document.getElementById('wcs-select');
+        if (selector && Number.isInteger(number) && number >= 0 && number < 6) {
+            selector.value = 'G' + (54 + number);
+        }
+    }
+
+    setDuetPollInterval(input) {
+        if (!input.checkValidity() || !Number.isFinite(input.valueAsNumber)) {
+            input.value = this.duetPollInterval ?? 500;
+            return;
+        }
+        this.duetPollInterval = input.valueAsNumber;
+        this.saveSettings();
+    }
+
+    async pollDuet(client) {
+        try {
+            const status = await client.call('status', { type: 2 });
+            if (this.duet !== client) return;
+            this.updateDuetStatus(status);
+            const workplace = await client.call('model', { key: 'move.workplaceNumber' });
+            if (this.duet !== client) return;
+            const selector = document.getElementById('wcs-select');
+            if (selector && Number.isInteger(workplace.result) && workplace.result >= 0 && workplace.result < 6) {
+                selector.value = 'G' + (54 + workplace.result);
+            }
+            const job = await client.call('status', { type: 3 });
+            if (this.duet !== client) return;
+            const jobActive = ['P', 'A', 'D', 'R'].includes(job.status) || job.filePosition > 0;
+            if (jobActive && Number.isFinite(job.fractionPrinted)) {
+                if (!this.duetJobFile) {
+                    // Keep reporting job progress if the optional filename lookup fails.
+                    const file = await client.call('model', { key: 'job.file.fileName' }).catch(() => null);
+                    if (this.duet !== client) return;
+                    this.duetJobFile = typeof file?.result === 'string' ? file.result : null;
+                }
+                window.dispatchEvent(new CustomEvent('sd-status', {
+                    detail: { pct: Math.min(100, Math.max(0, job.fractionPrinted)), filename: this.duetJobFile }
+                }));
+            } else if (!jobActive) {
+                this.duetJobFile = undefined;
+                if (window.jobController?.sdJobActive) window.dispatchEvent(new Event('sd-job-complete'));
+            }
+            if (this.duetReplySequence !== status.seq) {
+                const reply = await client.call('reply');
+                if (this.duet !== client) return;
+                this.duetReplySequence = status.seq;
+                for (const line of reply.trim().split('\n').filter(Boolean)) this.emit('line', line.trim());
+            }
+            if (this.duet === client) this.duetTimer = setTimeout(() => this.pollDuet(client), this.duetPollInterval ?? 500);
+        } catch (error) {
+            if (this.duet !== client) return;
+            this.disconnect();
+            this.emit('error', error);
+        }
+    }
+
     disconnect() {
+        if (this.duet) {
+            const client = this.duet;
+            this.duet = null;
+            this.duetReplySequence = undefined;
+            clearTimeout(this.duetTimer);
+            this.handleDisconnect();
+            return client.call('disconnect').catch(() => {});
+        }
+
         this._setConnectingState(false);
 
         if (this.type === 'webserial') {
@@ -1030,6 +1740,21 @@ export class ConnectionManager {
     }
 
     handleDisconnect() {
+        this.duetAxisWrite = null;
+        document.getElementById('duet-axis-rows')?.replaceChildren();
+        for (const id of ['duet-axis-settings', 'duet-spindle-status']) {
+            const output = document.getElementById(id);
+            if (output) output.textContent = '';
+        }
+        this.isDuetSerial = false;
+        this.duetSerialPollPending = false;
+        this.duetFirmwareInfo = null;
+        this.duetFeedOverride = undefined;
+        this.duetState = undefined;
+        if (window.droHandler) window.droHandler.homedMask = null;
+        window.troubleshooting?.updateHoming(null);
+        this.duetProbeKnown = false;
+        this.duetJobFile = undefined;
         this._setConnectingState(false);
         this._connectionGeneration++;
         this.clearPendingState();
@@ -1086,6 +1811,30 @@ export class ConnectionManager {
     }
 
     async sendCommand(line) {
+        if (this.duet || this.isDuetSerial) {
+            const code = String(line).trim();
+            const command = code && duetCommand(code);
+            if (!command) return;
+            if (code.startsWith('$F=') && window.jobController?._hasActiveJob()) {
+                this.emit('error', new Error('Wait for the current job to finish before starting another SD file.'));
+                return;
+            }
+            if (/^\$(?:H|J=)/i.test(code) && this.duetState !== 'I') {
+                this.emit('error', new Error('The Duet must be powered and idle to jog or home'));
+                return;
+            }
+            if (this.duet) {
+                await this.duet.send(command);
+                this.emit('sent', code);
+            } else {
+                for (const commandLine of command.split('\n')) {
+                    if (this.type === 'webserial') await this.webSerial.sendCommand(commandLine);
+                    else await this.flowControl.sendCommand(commandLine);
+                }
+            }
+            return;
+        }
+
         // Extended commands require positive identification from $I.
         if (!this.isGrblHAL && /^\$(?:F|E[AEGS]|I\+|PINS|PINSTATE|SPINDLE|TLR|TPW|H[XYZABC])/i.test(String(line).trim())) return;
 
@@ -1111,6 +1860,25 @@ export class ConnectionManager {
     }
 
     async sendRealtime(char) {
+        if (this.duet || this.isDuetSerial) {
+            const delta = { '\x91': 10, '\x92': -10 }[char];
+            if (char === '\x90' || delta !== undefined) {
+                if (delta !== undefined && !Number.isFinite(this.duetFeedOverride)) return;
+                const value = char === '\x90' ? 100 : Math.max(10, Math.min(200, this.duetFeedOverride + delta));
+                try { await this.sendCommand('M220 S' + value); }
+                catch (error) { this.emit('error', error); }
+                return;
+            }
+        }
+        if (this.duet || this.isDuetSerial) {
+            const command = { '!': 'M25', '~': 'M24' }[char];
+            if (command) {
+                try { await this.sendCommand(command); }
+                catch (error) { this.emit('error', error); }
+            }
+            return;
+        }
+
         if ((char === '\x87' || char === '\x80') && !this.isGrblHAL) char = '?';
 
         if (char === '?' || char === '\x87' || char === '\x80') {

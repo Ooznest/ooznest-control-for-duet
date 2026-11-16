@@ -10,7 +10,8 @@ const { WebSocketServer } = require('ws');
 const { autoUpdater } = require('electron-updater');
 const { runFirmwareFlash } = require('./firmware-flash-backend.js');
 const expressApp = express();
-const port = 8081; // Pick a port for the internal server
+const isBenchRun = process.argv.includes('--duet-ui-check');
+const port = isBenchRun ? 0 : 8082;
 expressApp.use(express.static(__dirname));
 
 const server = http.createServer(expressApp);
@@ -81,6 +82,20 @@ ipcMain.on('window-maximize', (event) => {
 
 ipcMain.on('window-close', (event) => {
     app.quit();
+});
+
+let mainWindow;
+
+ipcMain.handle('duet-request', async (event, url, options) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Invalid Duet request sender');
+    const target = new URL(url);
+    if (!['http:', 'https:'].includes(target.protocol) || !/^\/rr_[a-z]+$/.test(target.pathname)) {
+        throw new Error('Invalid Duet endpoint');
+    }
+    const response = await fetch(target, {
+        ...options, redirect: 'error', signal: AbortSignal.timeout(options.body === undefined ? 6000 : 120000)
+    });
+    return { status: response.status, body: await response.arrayBuffer() };
 });
 
 ipcMain.handle('get-network-info', async () => {
@@ -492,9 +507,6 @@ async function handleMessage(data, ws) {
     }
 }
 
-server.listen(port, '0.0.0.0', () => {
-    console.log(`Internal server running at http://0.0.0.0:${port}`);
-});
 
 // --- Telnet Network Scanning (Electron backend) ---
 
@@ -607,17 +619,20 @@ async function scanTelnetNetwork(port, ws, subnetOverride = null) {
 }
 
 function createWindow() {
-    const mainWindow = new BrowserWindow({
+    mainWindow = new BrowserWindow({
         width: 1280,
         height: 800,
         frame: false, // HIDE DEFAULT WINDOW FRAME
         webPreferences: {
+            offscreen: !app.isPackaged && process.argv.includes('--duet-ui-check'),
+            // Keep controller status polling active while the window is minimized.
+            backgroundThrottling: false,
             nodeIntegration: false,
             contextIsolation: true,
             preload: path.join(__dirname, 'preload.js')
         },
         autoHideMenuBar: true,
-        title: "grblHAL Web (Electron)",
+        title: 'Ooznest Control Duet',
         icon: path.join(__dirname, 'cordova', 'resources', 'icon.png')
     });
 
@@ -639,7 +654,7 @@ function createWindow() {
         }
     });
 
-    mainWindow.loadURL(`http://127.0.0.1:${port}`);
+    mainWindow.loadURL(`http://127.0.0.1:${server.address().port}`);
 
     // When the window is ready, send any queued or argv file to the renderer
     mainWindow.webContents.on('did-finish-load', () => {
@@ -657,6 +672,20 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    server.once('error', error => {
+        if (isBenchRun) {
+            console.error('Duet bench server failed to start:', error);
+            app.exit(1);
+            return;
+        }
+        dialog.showErrorBox('Ooznest Control Duet could not start', `Could not open its local server on port ${port}.\n\n${error.message}`);
+        app.quit();
+    });
+    // Keep the renderer origin stable so its settings survive restarts.
+    server.listen(port, '127.0.0.1', () => {
+        createWindow();
+        console.log(`Internal server running at http://127.0.0.1:${server.address().port}`);
+    });
     // Auto-Updater Logic
     let updateDownloadWatchdog = null;
     let updateCheckStarted = false;
@@ -711,6 +740,7 @@ app.whenReady().then(() => {
 
         updateCheckStarted = true;
         sendUpdateEvent('update-checking', { message: 'Checking for updates...' });
+        if (!app.isPackaged) return;
         autoUpdater.checkForUpdatesAndNotify().catch(err => {
             console.error('Auto-update check failed:', err.message);
             sendUpdateEvent('update-error', { message: err.message || String(err) });
@@ -721,7 +751,6 @@ app.whenReady().then(() => {
         autoUpdater.quitAndInstall();
     });
 
-    createWindow();
 
     // Renderer asks to open a G-code file via native dialog
     ipcMain.handle('load-gcode-dialog', async () => {

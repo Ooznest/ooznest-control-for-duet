@@ -188,7 +188,7 @@ export class GamepadController {
     }
 
     _queueJogIfNeeded(now) {
-        if (!this.ws?.isConnected || !this.latestJog || this.waitingForOk) return;
+        if (!this.ws?.isConnected || this.ws.duet || this.ws.isDuetSerial || !this.latestJog || this.waitingForOk) return;
 
         const queuedMs = Math.max(0, this.plannerUntil - now);
         if (queuedMs >= PLANNER_TARGET_MS) return;

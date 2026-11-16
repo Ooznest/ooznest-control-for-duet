@@ -2,6 +2,7 @@
 <resources>
     <!-- 0x0483 / 0x5740: STMicroelectronics CDC (grblHAL STM32/Nucleo) -->
     <usb-device vendor-id="1155" product-id="22336" />
+    <usb-device vendor-id="7504" product-id="24812" />
 
     <!-- 0x0403 / 0x60xx: FTDI -->
     <usb-device vendor-id="1027" product-id="24577" />

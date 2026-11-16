@@ -29,6 +29,10 @@ export class TroubleshootingInfoView {
     }
 
     _getFirmwareInfo() {
+        const duet = window.ws?.duetFirmwareInfo;
+        if (duet) {
+            return { version: duet.version || 'Unknown', board: duet.board, machineConfig: duet.machineConfig };
+        }
         const wizard = window.configWizard;
         const verInfo = wizard?.verInfo || null;
         const update = window.ws?.isGrblHAL ? (window.firmwareVersionChecker?.getStatus?.() || null) : null;
@@ -462,6 +466,9 @@ export class TroubleshootingInfoView {
 
         let html = '<div class="space-y-4">';
         html += this._networkStatusCard();
+        if (window.ws?.duet || window.ws?.isDuetSerial) {
+            html += this._detailBlock('Homing', this._getHomingLines());
+        }
 
         html += '<div class="bg-white rounded-xl shadow-soft border border-grey-light overflow-hidden">';
         html += '<div class="px-4 py-2.5 border-b border-grey-light flex items-center gap-2">';

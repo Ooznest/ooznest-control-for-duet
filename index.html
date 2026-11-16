@@ -4,8 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ooznest Control</title>
-    <meta name="description" content="Ooznest Machine Control Web UI for grblHAL CNC controllers. Control, monitor, and manage your CNC machine wirelessly.">
+    <title>Ooznest Control Duet</title>
+    <link rel="manifest" href="./site.webmanifest">
+    <meta name="description" content="Ooznest Control Duet for WorkBee CNC machines running RepRapFirmware. Connect over USB or HTTP.">
     <link rel="icon" href="./favicon.ico" sizes="32x32">
     <link rel="icon" href="./favicon-32x32.png" sizes="32x32">
     <link rel="icon" href="./favicon-16x16.png" sizes="16x16">
@@ -347,7 +348,7 @@
     <div id="electron-title-bar"
         class="hidden h-10 bg-[#1e293b] text-white flex items-center justify-between px-4 border-b border-white/5 window-drag-region shrink-0">
         <div class="flex items-center">
-            <span class="text-[10px] font-bold uppercase tracking-widest text-[#529A9F]">Ooznest Control <span id="electron-title-version"></span></span>
+            <span class="text-[10px] font-bold uppercase tracking-widest text-[#529A9F]">Ooznest Control Duet <span id="electron-title-version"></span></span>
         </div>
         <div class="flex items-center window-no-drag">
             <button class="w-11 h-10 flex items-center justify-center hover:bg-white/10 transition-colors"
@@ -377,14 +378,22 @@
                         <i data-lucide="menu" class="text-xl"></i>
                     </button>
 
-                    <button class="btn shadow-sm flex-1 !bg-amber-900/20 !text-amber-400 !border-amber-700/30 hover:!bg-amber-900/30"
+                    <button data-duet-unsupported class="btn shadow-sm flex-1 !bg-amber-900/20 !text-amber-400 !border-amber-700/30 hover:!bg-amber-900/30"
                       onclick="sendCmdWithToast('$X', 'Unlock sent', 'unlock')" title="Unlock ($X)">
                       <i data-lucide="unlock" style="width:12px;height:12px"></i> Unlock
                     </button>
 
-                    <button id="btn-reset" class="btn flex-1 shadow-sm" onclick="sendRealtimeWithToast('\x18', 'Reset sent', 'refresh-cw')" title="Soft Reset"
+                    <button id="btn-reset" data-duet-unsupported class="btn flex-1 shadow-sm" onclick="sendRealtimeWithToast('\x18', 'Reset sent', 'refresh-cw')" title="Soft Reset"
                         disabled>
                         <i data-lucide="octagon-alert" ></i>Reset
+                    </button>
+                    <button type="button" data-duet-only class="btn btn-danger flex-1 shadow-sm"
+                        onclick="if (window.ws?.isConnected) window.ws.sendCommand('M112').catch(error => window.ws.emit('error', error))">
+                        Emergency Stop
+                    </button>
+                    <button id="duet-restart" type="button" data-duet-only hidden class="btn flex-1 shadow-sm"
+                        onclick="window.reporter.showConfirm('Restart Duet', 'Restart the controller after clearing the cause of the emergency stop?', () => window.ws.restartDuet())">
+                        Restart Duet
                     </button>
                     <button id="btn-connect" class="btn btn-primary flex-1 shadow-sm">Connect</button>
 
@@ -396,11 +405,11 @@
                     <div class="flex items-center justify-between pb-2 border-b border-white/10 mb-1.5">
                         <span id="machine-state" class="machine-status-pill text-center">Unknown</span>
                         <div class="flex items-center gap-1">
-                            <button id="acc-spindle" class="dro-accessory-btn" onclick="window.dro.toggleAccessory('S')" title="Spindle">
+                            <button id="acc-spindle" data-duet-unsupported class="dro-accessory-btn" onclick="window.dro.toggleAccessory('S')" title="Spindle">
                                 <i data-lucide="fan" style="width:12px;height:12px"></i>
                                 <span>Spindle</span>
                             </button>
-                            <button id="acc-flood" class="dro-accessory-btn" onclick="window.dro.toggleAccessory('F')" title="Toggle Flood Coolant">
+                            <button id="acc-flood" data-duet-unsupported class="dro-accessory-btn" onclick="window.dro.toggleAccessory('F')" title="Toggle Flood Coolant">
                                 <i data-lucide="droplet" style="width:12px;height:12px"></i>
                                 <span>Flood</span>
                             </button>
@@ -459,7 +468,7 @@
 
                     <!-- X Axis -->
                     <div class="dro-card border-l-4 border-l-axis-x">
-                        <button id="homing-btn-x" data-grblhal-only class="dro-home-btn shadow-sm"
+                        <button id="homing-btn-x" data-duet-supported data-grblhal-only class="dro-home-btn shadow-sm"
                             onclick="window.dro.homeAxis('X')" title="Home X">
                             Home X
                         </button>
@@ -480,7 +489,7 @@
 
                     <!-- Y Axis -->
                     <div class="dro-card border-l-4 border-l-axis-y">
-                        <button id="homing-btn-y" data-grblhal-only class="dro-home-btn shadow-sm"
+                        <button id="homing-btn-y" data-duet-supported data-grblhal-only class="dro-home-btn shadow-sm"
                             onclick="window.dro.homeAxis('Y')" title="Home Y">
                             Home Y
                         </button>
@@ -501,7 +510,7 @@
 
                     <!-- Z Axis -->
                     <div class="dro-card border-l-4 border-l-axis-z">
-                        <button id="homing-btn-z" data-grblhal-only class="dro-home-btn shadow-sm"
+                        <button id="homing-btn-z" data-duet-supported data-grblhal-only class="dro-home-btn shadow-sm"
                             onclick="window.dro.homeAxis('Z')" title="Home Z">
                             Home Z
                         </button>
@@ -561,7 +570,7 @@
 
                     <!-- Overrides (merged into DRO card) -->
                     <div class="mt-2 pt-2 border-t border-white/20 flex flex-col gap-1">
-                        <div class="flex items-center justify-between text-[10px]">
+                        <div data-duet-unsupported class="flex items-center justify-between text-[10px]">
                             <div class="flex items-center gap-1.5 font-bold text-white/80 uppercase tracking-wide">
                                 <i data-lucide="fan" ></i>
                                 <span>Spindle Override</span>
@@ -587,7 +596,7 @@
                                     title="Reset to 100%">RST</button>
                             </div>
                         </div>
-                        <div class="flex items-center justify-between text-[10px]">
+                        <div data-duet-unsupported class="flex items-center justify-between text-[10px]">
                             <div class="flex items-center gap-1.5 font-bold text-white/80 uppercase tracking-wide">
                                 <i data-lucide="zap" ></i>
                                 <span>Rapids Override</span>
@@ -626,7 +635,7 @@
                                 <!-- Populated by JS -->
                             </select>
                         </div>
-                        <div class="col-span-2">
+                        <div data-duet-unsupported class="col-span-2">
                             <label class="ooznest-label text-[9px] font-bold text-grey uppercase block mb-1">Jog Mode</label>
                             <label class="oz-segmented-toggle oz-segmented-toggle--dark h-8 w-full" for="jogContinuous">
                                 <input type="checkbox" id="jogContinuous" class="sr-only">
@@ -699,6 +708,12 @@
                             </div>
                         </div>
                     </div>
+                    <div id="duet-z-adjustment" data-duet-only class="flex items-center justify-between gap-2 px-2 py-1">
+                        <span>Z Babystepping</span>
+                        <button type="button" class="override-mini-btn" disabled onclick="ws.adjustDuetZ(-0.05)" aria-label="Lower Z offset by 0.05 mm">−</button>
+                        <output id="duet-z-offset">—</output>
+                        <button type="button" class="override-mini-btn" disabled onclick="ws.adjustDuetZ(0.05)" aria-label="Raise Z offset by 0.05 mm">+</button>
+                    </div>
                 </div>
 
 
@@ -742,7 +757,7 @@
                         <button class="tab-btn" data-tab="editor-view" onclick="switchTab('editor-view', this)"><i data-lucide="square-code"></i>Editor</button>
                         <button class="tab-btn" data-tab="probe-view" onclick="switchTab('probe-view', this)"><i data-lucide="crosshair"></i>Probe</button>
                         <button class="tab-btn" data-tab="macros-view" onclick="switchTab('macros-view', this)"><i data-lucide="zap"></i>Macros</button>
-                        <button id="sd-tab-btn" data-grblhal-only class="tab-btn" data-tab="sd-view" onclick="switchTab('sd-view', this)">
+                        <button id="sd-tab-btn" class="tab-btn" data-tab="sd-view" onclick="switchTab('sd-view', this)">
                             <i data-lucide="hard-drive"></i>SD Card
                             <span id="sd-badge"
                                 class="hidden ml-2 tab-badge text-[10px] font-bold px-1.5 py-0 rounded-full text-white">0</span>
@@ -782,6 +797,8 @@
                                 <!-- Title row -->
                                 <div class="mb-1">
                                     <span class="text-white font-bold text-xs tracking-wide">Job Progress</span>
+                                    <button id="duet-preview-job" class="hidden ml-2 text-white text-xs underline"
+                                        onclick="window.sdHandler.previewDuetJob()">Load Current Job</button>
                                 </div>
                                 <!-- Bars row: 90% progress + 10% buffer -->
                                 <div class="flex gap-1.5 mb-1">
@@ -817,7 +834,7 @@
                                     <span><span class="font-medium">Open File from Computer</span><br><span class="text-[11px] text-grey">Browse files on this device</span></span>
                                 </button>
                                 <div class="border-t border-grey-light"></div>
-                                <button id="open-file-sd-option" data-grblhal-only class="w-full text-left px-4 py-3 text-sm text-grey-dark hover:bg-grey-bg flex items-center gap-3 transition-colors opacity-50 pointer-events-none"
+                                <button id="open-file-sd-option" data-duet-supported data-grblhal-only class="w-full text-left px-4 py-3 text-sm text-grey-dark hover:bg-grey-bg flex items-center gap-3 transition-colors opacity-50 pointer-events-none"
                                     onclick="switchTab('sd-view'); closeOpenFileDropdown();" disabled>
                                     <i data-lucide="hard-drive" class="text-lg" style="color:#FF6600"></i>
                                     <span><span class="font-medium">Open File from SD Card</span><br><span class="text-[11px] text-grey">Browse files on the controller</span></span>
@@ -834,19 +851,21 @@
                                 <i data-lucide="play" class="text-lg"></i> Run Job
                             </button>
                             <div class="absolute right-0 top-full mt-1 w-72 bg-white rounded-lg shadow-xl border border-grey-light hidden z-[100] overflow-hidden">
-                                <button class="w-full text-left px-4 py-3 text-sm text-grey-dark hover:bg-grey-bg flex items-center gap-3 transition-colors"
+                                <button data-duet-unsupported class="w-full text-left px-4 py-3 text-sm text-grey-dark hover:bg-grey-bg flex items-center gap-3 transition-colors"
                                     onclick="closeRunJobDropdown(); runCurrentJob();">
                                     <i data-lucide="play" class="text-lg" style="color:#FF6600"></i>
                                     <span><span class="font-medium">Run (Streaming)</span><br><span id="run-job-streaming-description" class="text-[11px] text-grey">Stream lines directly from your browser</span></span>
                                 </button>
                                 <div class="border-t border-grey-light"></div>
-                                <button id="run-job-sd-option" data-grblhal-only class="w-full text-left px-4 py-3 text-sm text-grey-dark hover:bg-grey-bg flex items-center gap-3 transition-colors"
+                                <button id="run-job-sd-option" data-duet-supported data-grblhal-only class="w-full text-left px-4 py-3 text-sm text-grey-dark hover:bg-grey-bg flex items-center gap-3 transition-colors"
                                     onclick="closeRunJobDropdown(); runJobFromSD();">
                                     <i data-lucide="hard-drive" class="text-lg" style="color:#FF6600"></i>
                                     <span><span class="font-medium">Run (From SD Card)</span><br><span class="text-[11px] text-grey">Upload then run from controller SD</span></span>
                                 </button>
                             </div>
                         </div>
+                        <button id="duet-recover-job" data-duet-only class="overlay-btn" disabled
+                            onclick="window.jobController.recoverDuetJob()">Power Loss Resume</button>
                         <div id="job-active-controls" class="hidden flex gap-1.5">
                             <button id="pause-job-btn" class="overlay-btn !bg-yellow-100 !text-yellow-800 flex-1" onclick="pauseJob()">
                                 <i data-lucide="pause" class="text-lg"></i> Pause
@@ -855,6 +874,7 @@
                                 <i data-lucide="square" class="text-lg"></i> Stop
                             </button>
                         </div>
+                        <button class="overlay-btn" onclick="window.unloadDuetPreview()">Unload G-code</button>
                         <button class="overlay-btn" onclick="resetCamera()">
                             <i data-lucide="video" class="text-secondary"></i> Reset
                         </button>
@@ -1052,7 +1072,7 @@
                                         <i data-lucide="download" ></i>
                                         <span>Save to PC</span>
                                     </button>
-                                    <button id="editor-upload-sd-btn" data-grblhal-only class="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+                                    <button id="editor-upload-sd-btn" data-duet-supported data-grblhal-only class="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
                                         onclick="uploadEditorToSD()" title="Upload to SD" disabled>
                                         <i data-lucide="upload" class="!text-white"></i>
                                         <span>Upload to SD</span>
@@ -1081,6 +1101,10 @@
                 <div id="macros-view" class="tab-pane hidden w-full h-full bg-grey-bg">
                     <div class="w-full h-full tab-shell-padding overflow-y-auto">
                         <div class="w-full pt-4 pb-20">
+                            <section id="duet-macros" class="mb-4" hidden>
+                                <h3 class="font-bold text-sm mb-2">SD Macros</h3>
+                                <div id="duet-macro-list" class="flex flex-wrap gap-2"></div>
+                            </section>
                             <!-- Macro Grid -->
                             <div id="macro-grid"
                                 class="macro-grid-responsive grid gap-3">
@@ -1091,7 +1115,8 @@
                 </div>
 
                 <!-- SD Card -->
-                <div id="sd-view" data-grblhal-only class="tab-pane hidden w-full h-full bg-grey-bg">
+                <div id="sd-view" class="tab-pane hidden w-full h-full bg-grey-bg">
+                    <p id="duet-sd-usb-help" class="mx-4 mt-4 text-sm text-grey-dark" hidden>Disconnect USB and connect to the Duet over HTTP to manage SD card files.</p>
                     <div class="w-full h-full tab-shell-padding overflow-y-auto">
                         <div class="w-full pb-20">
                             <div
@@ -1111,7 +1136,7 @@
                                         onclick="window.sdHandler.refresh()" disabled>
                                         <i data-lucide="refresh-cw" ></i> Refresh
                                     </button>
-                                    <button id="sd-format-btn" class="btn btn-danger flex-1 md:flex-initial disabled:opacity-40 disabled:cursor-not-allowed"
+                                    <button id="sd-format-btn" data-grblhal-only class="btn btn-danger flex-1 md:flex-initial disabled:opacity-40 disabled:cursor-not-allowed"
                                         onclick="window.sdHandler.format()" disabled>
                                         <i data-lucide="triangle-alert" ></i> Format
                                     </button>
@@ -1760,7 +1785,191 @@
 
                 <!-- Grbl Settings -->
                 <div id="settings-view" class="tab-pane hidden w-full h-full bg-grey-bg">
-                    <div class="w-full h-full tab-shell-padding overflow-hidden flex flex-col min-h-0">
+                    <section id="duet-settings-view" data-duet-only class="w-full h-full tab-shell-padding overflow-hidden flex flex-col min-h-0">
+                        <div class="min-h-[3rem] h-auto flex flex-wrap items-center justify-end mb-6 gap-2 py-2 shrink-0">
+                        <button type="button" class="btn btn-secondary" onclick="document.getElementById('analytics-settings-button').click()">Privacy</button>
+                            <fieldset id="duet-settings-actions" data-duet-settings-action disabled class="flex gap-2">
+                                <button type="button" class="btn btn-secondary" onclick="window.ws.refreshDuetAxes()">
+                            <i data-lucide="refresh-cw"></i> Refresh
+                        </button>
+                                <button id="duet-save-settings" type="button" class="btn btn-primary" disabled onclick="window.ws.saveDuetAxes()">
+                                    <i data-lucide="save"></i> Save
+                                </button>
+                            </fieldset>
+                            <button id="duet-save-network" form="duet-network-form" type="submit" class="btn btn-primary" hidden>
+                                <i data-lucide="save"></i> Save
+                            </button>
+                        </div>
+                        <div class="flex flex-row h-[calc(100vh-220px)] border border-grey-light rounded-lg bg-white overflow-hidden">
+                            <aside id="duet-settings-sidebar" class="w-[140px] md:w-1/3 flex flex-col shrink-0">
+                                <div class="p-0 sticky top-0 z-20">
+                                    <div class="settings-sidebar-search-card">
+                                    <label for="duet-settings-search" class="ooznest-label settings-sidebar-search-label">Search</label>
+                                    <input id="duet-settings-search" type="search" placeholder="Search settings..."
+                                        class="w-full pl-6 pr-2 py-2 text-[10px] md:text-xs border border-grey-light rounded bg-grey-bg focus:bg-white focus:border-primary outline-none transition-colors"
+                                        oninput="window.uiManager.renderDuetSettingsGroup()">
+                                    </div>
+                                </div>
+                                <nav aria-label="Duet settings groups" class="overflow-y-auto flex-1 bg-grey-bg p-2 md:p-3 space-y-2"
+                                    onclick="const group = event.target.closest('[data-duet-settings-nav]'); if (group) window.uiManager.renderDuetSettingsGroup(group.dataset.duetSettingsNav)">
+                                    <button type="button" data-duet-settings-nav="Root" aria-current="true" class="settings-nav-item is-active w-full text-left px-3 py-3 text-xs font-bold rounded-lg">Root</button>
+                                    <button type="button" data-duet-settings-nav="Axes" class="settings-nav-item w-full text-left px-3 py-3 text-xs font-bold rounded-lg">Axes</button>
+                                    <button type="button" data-duet-settings-nav="X-axis" class="settings-nav-item w-full text-left px-3 py-3 text-xs font-bold rounded-lg"><span class="ml-4">- X-axis</span></button>
+                                    <button type="button" data-duet-settings-nav="Y-axis" class="settings-nav-item w-full text-left px-3 py-3 text-xs font-bold rounded-lg"><span class="ml-4">- Y-axis</span></button>
+                                    <button type="button" data-duet-settings-nav="Z-axis" class="settings-nav-item w-full text-left px-3 py-3 text-xs font-bold rounded-lg"><span class="ml-4">- Z-axis</span></button>
+                                    <button type="button" data-duet-settings-nav="Networking" class="settings-nav-item w-full text-left px-3 py-3 text-xs font-bold rounded-lg">Networking</button>
+                                    <button type="button" data-duet-settings-nav="Wi-Fi" hidden class="settings-nav-item w-full text-left px-3 py-3 text-xs font-bold rounded-lg"><span class="ml-4">- Wi-Fi</span></button>
+                                    <button type="button" data-duet-settings-nav="Ethernet" hidden class="settings-nav-item w-full text-left px-3 py-3 text-xs font-bold rounded-lg"><span class="ml-4">- Ethernet</span></button>
+                                    <button type="button" data-duet-settings-nav="Communications" class="settings-nav-item w-full text-left px-3 py-3 text-xs font-bold rounded-lg">Communications</button>
+                                    <button type="button" data-duet-settings-nav="Spindle" class="settings-nav-item w-full text-left px-3 py-3 text-xs font-bold rounded-lg">Spindle</button>
+                                </nav>
+                            </aside>
+                            <div id="duet-settings-main-panel" class="flex-1 overflow-y-auto bg-white relative w-0 flex flex-col min-h-0">
+                                <div class="px-4 py-2.5 border-b border-grey-light sticky top-0 z-20 flex items-center gap-2 bg-white">
+                                    <i data-lucide="folder" style="width:14px;height:14px"></i>
+                                    <h3 id="duet-settings-group-title" class="font-bold text-secondary-dark text-xs uppercase tracking-wider truncate">Root</h3>
+                                </div>
+                            <template id="duet-axis-row">
+                                <tr class="hover:bg-grey-bg">
+                                    <td class="px-1 md:px-4 py-2 font-mono font-bold"></td>
+                                    <td class="px-1 md:px-4 py-2 font-bold"></td>
+                                    <td class="px-1 md:px-4 py-2">
+                                        <input type="number" required step="any" class="input-field h-7 md:h-8 px-1 text-xs font-mono w-full">
+                                    </td>
+                                    <td class="px-1 md:px-4 py-2 text-grey"></td>
+                                </tr>
+                            </template>
+                                <div id="duet-settings-subcategories" class="p-4 bg-white">
+                                    <h4 class="text-[10px] font-bold text-grey uppercase tracking-wider mb-2">Subcategories</h4>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+                                    <template id="duet-settings-category-card">
+                                        <button type="button" class="flex flex-col items-start p-3 bg-white border border-grey-light rounded-lg hover:border-primary hover:shadow-md hover:-translate-y-0.5 transition-all text-left group">
+                                            <span class="font-bold text-secondary-dark group-hover:text-primary-dark text-xs flex items-center gap-2">
+                                                <i data-lucide="folder" style="width:14px;height:14px"></i>
+                                                <span></span>
+                                            </span>
+                                        </button>
+                                    </template>
+                                </div>
+                                <p id="duet-axis-settings" class="px-4 text-sm empty:hidden" aria-live="polite"></p>
+                                <form id="duet-network-form" onsubmit="event.preventDefault(); window.ws.saveDuetNetwork(this)"></form>
+                                <p id="duet-network-settings-hint" class="px-4 py-3 text-sm text-grey" hidden>Connect over USB to change network settings.</p>
+                            <table id="duet-settings-table" class="w-full text-left text-sm" hidden>
+                    <thead class="bg-white text-grey uppercase text-[9px] md:text-[10px] tracking-wider border-b border-grey-light sticky top-0 z-10">
+                        <tr>
+                            <th class="px-1 md:px-4 py-2 w-8 md:w-16 bg-surface text-center md:text-left">Code</th>
+                            <th class="px-1 md:px-4 py-2 bg-surface w-auto">Description</th>
+                            <th class="px-1 md:px-4 py-2 w-16 md:w-1/3 bg-surface">Value</th>
+                            <th class="px-1 md:px-4 py-2 w-16 md:w-28 bg-surface whitespace-nowrap">Unit</th>
+                        </tr>
+                    </thead>
+                    <tbody id="duet-axis-rows" data-duet-settings-group="Axes" class="divide-y divide-grey-light"></tbody>
+                                <tbody class="divide-y divide-grey-light">
+                                    <tr data-duet-settings-group="Axes">
+                                        <td class="px-1 md:px-4 py-2 font-mono font-bold">M208</td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Working area preset</td>
+                                        <td class="px-1 md:px-4 py-2">
+                                            <fieldset data-duet-settings-action disabled>
+                                                <select id="duet-workbee-model" disabled aria-label="WorkBee model" onchange="window.ws.setDuetAxisPreset(this)" class="ooznest-select oz-select max-w-full min-w-0">
+                                <option value="">Select your WorkBee model</option>
+                                <option value="270,270,88">WorkBee Z1+ 500x500mm - Working Area: 270x270x88mm</option>
+                                <option value="520,520,88">WorkBee Z1+ 750x750mm - Working Area: 520x520x88mm</option>
+                                <option value="520,770,88">WorkBee Z1+ 750x1000mm - Working Area: 520x770x88mm</option>
+                                <option value="770,770,88">WorkBee Z1+ 1000x1000mm - Working Area: 770x770x88mm</option>
+                                <option value="770,1270,88">WorkBee Z1+ 1000x1500mm - Working Area: 770x1270x88mm</option>
+                                <option value="1270,1270,88">WorkBee Z1+ 1500x1500mm - Working Area: 1270x1270x88mm</option>
+                                <option value="300,270,94">WorkBee Z1 500x500mm - Working Area: 300x270x94mm</option>
+                                <option value="550,520,94">WorkBee Z1 750x750mm - Working Area: 550x520x94mm</option>
+                                <option value="550,770,94">WorkBee Z1 750x1000mm - Working Area: 550x770x94mm</option>
+                                <option value="800,770,94">WorkBee Z1 1000x1000mm - Working Area: 800x770x94mm</option>
+                                <option value="800,1270,94">WorkBee Z1 1000x1500mm - Working Area: 800x1270x94mm</option>
+                                <option value="1300,1270,94">WorkBee Z1 1500x1500mm - Working Area: 1300x1270x94mm</option>
+                            </select>
+                                            </fieldset>
+                                        </td>
+                                        <td></td>
+                                    </tr>
+                                    <tr data-duet-settings-group="Spindle" hidden>
+                                        <td></td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Spindle status</td>
+                                        <td colspan="2" class="px-1 md:px-4 py-2">
+                                            <pre id="duet-spindle-status" class="whitespace-pre-wrap" aria-live="polite"></pre>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                                <tbody data-duet-settings-group="Communications" hidden class="divide-y divide-grey-light">
+                                    <tr>
+                                        <td class="px-1 md:px-4 py-2">HTTP</td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Delay after each status update</td>
+                                        <td class="px-1 md:px-4 py-2">
+                                            <input id="duet-poll-interval" type="number" min="250" max="5000" step="50" value="500"
+                                                aria-label="HTTP delay after each status update" class="input-field h-7 md:h-8 px-1 text-xs font-mono w-full"
+                                                oninput="window.ws.updateDuetSaveButton()">
+                                        </td>
+                                        <td class="px-1 md:px-4 py-2">ms</td>
+                                    </tr>
+                                </tbody>
+                                <tbody id="duet-network-controls" data-duet-settings-group="Ethernet" hidden class="divide-y divide-grey-light">
+                                    <tr>
+                                        <td></td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Interface</td>
+                                        <td class="px-1 md:px-4 py-2"><select form="duet-network-form" name="enabled" aria-label="Network interface" class="ooznest-select oz-select"><option value="">Keep current</option><option value="1">Enabled</option><option value="0">Disabled</option></select></td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Address mode</td>
+                                        <td class="px-1 md:px-4 py-2"><select form="duet-network-form" name="mode" aria-label="Network address mode" class="ooznest-select oz-select"><option value="">Keep current</option><option value="dhcp">DHCP</option><option value="static">Static</option></select></td>
+                                        <td></td>
+                                    </tr>
+                                    <tr data-duet-wifi>
+                                        <td></td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">SSID</td>
+                                        <td class="px-1 md:px-4 py-2"><input form="duet-network-form" name="ssid" aria-label="Wi-Fi SSID" maxlength="32" autocomplete="off" class="input-field w-full"></td>
+                                        <td></td>
+                                    </tr>
+                                    <tr data-duet-wifi>
+                                        <td></td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Password</td>
+                                        <td class="px-1 md:px-4 py-2"><input form="duet-network-form" name="password" aria-label="Wi-Fi password" type="password" maxlength="64" autocomplete="new-password" class="input-field w-full"></td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Static IPv4 address</td>
+                                        <td class="px-1 md:px-4 py-2"><input form="duet-network-form" name="address" aria-label="Static IPv4 address" autocomplete="off" class="input-field w-full"></td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-1 md:px-4 py-2 font-mono">M554</td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Gateway</td>
+                                        <td class="px-1 md:px-4 py-2">
+                                            <input form="duet-network-form" name="gateway" aria-label="Gateway" autocomplete="off" class="input-field h-7 md:h-8 w-full">
+                                        </td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-1 md:px-4 py-2 font-mono">M553</td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Netmask</td>
+                                        <td class="px-1 md:px-4 py-2">
+                                            <input form="duet-network-form" name="netmask" aria-label="Netmask" autocomplete="off" class="input-field h-7 md:h-8 w-full">
+                                        </td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-1 md:px-4 py-2 font-mono">M550</td>
+                                        <td class="px-1 md:px-4 py-2 font-bold">Hostname</td>
+                                        <td class="px-1 md:px-4 py-2">
+                                            <input form="duet-network-form" name="hostname" aria-label="Hostname" autocomplete="off" class="input-field h-7 md:h-8 w-full">
+                                        </td>
+                                        <td></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            </div>
+                        </div>
+                    </section>
+                    <div data-duet-unsupported class="w-full h-full tab-shell-padding overflow-hidden flex flex-col min-h-0">
                         <div class="w-full flex flex-col min-h-0 flex-1">
                             <div
                                 class="min-h-[3rem] h-auto flex items-center justify-end mb-6 gap-3 py-2 shrink-0">
@@ -1814,7 +2023,7 @@
                 <!-- START OF FILE index.html (Replace the entire probe-view div) -->
 
                 <!-- Probing Tab -->
-                <div id="probe-view" class="tab-pane hidden w-full h-full bg-grey-bg">
+                <div id="probe-view" class="tab-pane hidden w-full h-full overflow-y-auto bg-grey-bg">
                     <div id="probe-panel-content" class="w-full h-full tab-shell-padding py-4 md:py-6 overflow-y-auto">
                         <div class="w-full pb-20">
 
@@ -1836,7 +2045,7 @@
                                 <div class="w-full flex flex-col">
 
                                     <!-- Config Wizard Banner -->
-                                    <div id="probe-config-banner" class="mb-3 rounded-lg border text-xs font-bold bg-amber-50 border-amber-200 text-amber-700 p-3 items-center gap-3 flex hidden">
+                                    <div id="probe-config-banner" data-duet-unsupported class="mb-3 rounded-lg border text-xs font-bold bg-amber-50 border-amber-200 text-amber-700 p-3 items-center gap-3 flex hidden">
                                         <i data-lucide="triangle-alert" class="text-base"></i>
                                         <span class="flex-1">Config Wizard has not been run — probe settings may be incomplete.</span>
                                         <button class="btn btn-warning !py-1 !px-3 !text-[10px] whitespace-nowrap" data-grblhal-only onclick="window.configWizard.showWizard()">
@@ -1862,19 +2071,19 @@
                                             </button>
                                             <button
                                                 class="subtab-btn text-grey border-b-2 border-transparent probe-tab-btn prb-3d-probe-only"
-                                                data-target="tab-centers"
+                                                data-target="tab-centers" data-duet-probe-unsupported
                                                 onclick="window.probeHandler.switchProbeTab('tab-centers', this)">
                                                 Center Finder
                                             </button>
                                             <button
                                                 class="subtab-btn text-grey border-b-2 border-transparent probe-tab-btn prb-3d-probe-only"
-                                                data-target="tab-rotation"
+                                                data-target="tab-rotation" data-duet-probe-unsupported
                                                 onclick="window.probeHandler.switchProbeTab('tab-rotation', this)">
                                                 Rotation
                                             </button>
                                             <button
                                                 class="subtab-btn text-grey border-b-2 border-transparent probe-tab-btn prb-3d-probe-only"
-                                                data-target="tab-inside-corners"
+                                                data-target="tab-inside-corners" data-duet-probe-unsupported
                                                 onclick="window.probeHandler.switchProbeTab('tab-inside-corners', this)">
                                                 Inside Corners
                                             </button>
@@ -1996,7 +2205,7 @@
                                     </div>
 
                                     <!-- TAB CONTENT: Tool Length Offset -->
-                                    <div id="tab-tlo" class="probe-tab-content hidden">
+                                    <div id="tab-tlo" data-duet-probe-unsupported class="probe-tab-content hidden">
                                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             <div class="bg-white p-4 rounded-xl shadow-soft border border-grey-light flex flex-col min-h-[420px]">
                                                 <p class="text-xs text-grey leading-relaxed mb-4">
@@ -2180,7 +2389,7 @@
                                     </div>
 
                                     <!-- TAB CONTENT: Center Finder -->
-                                    <div id="tab-centers" class="probe-tab-content hidden prb-3d-probe-only">
+                                    <div id="tab-centers" data-duet-probe-unsupported class="probe-tab-content hidden prb-3d-probe-only">
                                         <div class="bg-white p-6 rounded-xl shadow-soft border border-grey-light mb-4">
                                             <p class="text-xs text-grey leading-relaxed mb-4">Position the probe tip approximately above the center of the feature you are probing. <strong>Approx Size</strong> is how far out the probe will travel before looking for edges. <strong>Inside Pockets</strong> start from center and move outward. <strong>Outer Features (Rect/Circular)</strong> move beyond the measurements then probe toward the center.</p>
                                             <h3 class="font-bold text-secondary-dark text-sm mb-2">Feature / Stock
@@ -2235,7 +2444,7 @@
                                     </div>
 
                                     <!-- TAB CONTENT: Inside Corners -->
-                                    <div id="tab-inside-corners" class="probe-tab-content hidden prb-3d-probe-only">
+                                    <div id="tab-inside-corners" data-duet-probe-unsupported class="probe-tab-content hidden prb-3d-probe-only">
                                         <div class="bg-white p-4 rounded-xl shadow-soft border border-grey-light">
                                             <div class="flex justify-between items-start mb-2">
                                                 <h3 class="font-bold text-secondary-dark text-sm"><i data-lucide="crop" ></i> Inside Corner</h3>
@@ -2265,7 +2474,7 @@
                                     </div>
 
                                     <!-- TAB CONTENT: Rotation (New) -->
-                                    <div id="tab-rotation" class="probe-tab-content hidden prb-3d-probe-only">
+                                    <div id="tab-rotation" data-duet-probe-unsupported class="probe-tab-content hidden prb-3d-probe-only">
                                         <div class="bg-white p-6 rounded-xl shadow-soft border border-grey-light">
                                             <h3 class="font-bold text-lg text-secondary-dark mb-4">Workpiece Rotation
                                             </h3>
@@ -2616,7 +2825,7 @@
 
                             <!-- INFO SUB-TAB -->
                             <div id="trouble-tab-info" class="trouble-tab-content hidden">
-                                <div id="homing-status-content" data-grblhal-only class="mb-4"></div>
+                                <div id="homing-status-content" data-duet-supported data-grblhal-only class="mb-4"></div>
                                 <div id="trouble-tab-info-content" class="space-y-4">
                                     <div class="text-grey text-center py-8">
                                         <i data-lucide="refresh-cw" class="animate-spin text-2xl"></i>
@@ -2747,16 +2956,17 @@
 
                 <!-- Telnet Config -->
                 <div id="config-telnet" class="hidden flex flex-col gap-4">
-                    <p class="text-xs text-grey">Connect to grblHAL over Ethernet or WiFi.</p>
+                    <p class="text-xs text-grey">Connect to your Duet over HTTP using Ethernet or Wi-Fi.</p>
                     <div id="telnet-manual-ip-wrap">
                         <div class="flex items-center justify-between mb-1 gap-3">
                             <label class="ooznest-label text-[10px] font-bold text-grey uppercase block">IP Address</label>
-                            <button id="btn-scan-telnet" onclick="window.openTelnetScanner()"
+                            <button id="btn-scan-telnet" hidden style="display:none" onclick="window.openTelnetScanner()"
                                 class="text-[10px] font-bold text-primary hover:text-primary-dark transition-colors whitespace-nowrap">
                                 <i data-lucide="search" class="mr-1"></i> SCAN NETWORK
                             </button>
                         </div>
-                        <input type="text" id="ip-telnet" class="ooznest-field input-field" placeholder="192.168.1.10" aria-label="Telnet IP address">
+                        <input type="text" id="ip-telnet" class="ooznest-field input-field" value="192.168.251.2" aria-label="Duet address">
+                        <input id="duet-password" type="password" class="ooznest-field input-field" placeholder="Duet password (optional)" aria-label="Duet password">
                     </div>
                     <div id="discover-panel" class="hidden bg-grey-bg rounded-xl border border-grey-light p-4 space-y-3">
                         <div class="flex justify-end">
@@ -2785,7 +2995,7 @@
                             </div>
                         </div>
                     </div>
-                    <div id="telnet-manual-port-wrap">
+                    <div id="telnet-manual-port-wrap" hidden>
                         <label class="ooznest-label text-[10px] font-bold text-grey uppercase block mb-1">Port</label>
                         <input type="number" id="port-telnet" class="ooznest-field input-field" value="23" aria-label="Telnet port">
                     </div>
@@ -3054,14 +3264,16 @@
                 'Upload the current job to the SD Card and start running it?',
                 () => {
                     const file = new File([content], defaultName, { type: 'text/plain' });
-                    window.sdHandler.startUpload(file, (uploadedName) => {
-                        const fullPath = window.sdHandler.path === '/'
+                    window.sdHandler.startUpload(file, (uploadedName, uploadedPath) => {
+                        const duet = window.ws.duet;
+                        const fullPath = uploadedPath ?? (window.sdHandler.path === '/'
                             ? uploadedName
-                            : `${window.sdHandler.path}/${uploadedName}`;
+                            : `${window.sdHandler.path}/${uploadedName}`);
                         setTimeout(() => {
+                            if (duet && window.ws.duet !== duet) return;
                             window.ws.sendCommand(`$F=${fullPath}`);
                         }, 500);
-                    }, { skipConfirm: true });
+                    }, { skipConfirm: true, runJob: true });
                 }
             );
         }
@@ -3089,6 +3301,7 @@
             }
             if (targetId === 'macros-view') {
                 if (window.macroHandler) window.macroHandler.render();
+                window.macroHandler?.renderDuetMacros();
             }
 
 
@@ -3226,7 +3439,7 @@
     <script type="module">
         import { WebSerial } from './js/machine/webserial.js?v=20261016';
         import { GCodeViewer } from './js/viewer/3dview.js?v=20260828a';
-        import { ProbeHandler } from './js/machine/probe.js?v=20261105a';
+        import { ProbeHandler } from './js/machine/probe.js?v=20261116-duet';
         import { SDCardHandler } from './js/features/sdcard.js?v=20260831a';
         import { AlarmsAndErrors } from './js/ui/alarms_and_errors.js';
         import { DROHandler } from './js/machine/dro.js?v=20260901a';
@@ -3250,14 +3463,14 @@
         import './js/features/analytics.js';
 
         // Import new modules
-        import './js/ui/ui.js';
+        import './js/ui/ui.js?v=20261116-duet-settings';
         import './js/features/job-control.js';
         import './js/machine/jogging.js';
         import './js/ui/console.js?v=2';
         import './js/editor/editor-integration.js';
         import './js/ui/camera-controls.js';
         import './js/machine/line-processor.js';
-        import { ConnectionManager } from './js/machine/connection-manager.js?v=20261016';
+        import { ConnectionManager } from './js/machine/connection-manager.js?v=20261116-duet-probe';
 
         // Globals
         const webSerial = new WebSerial();
@@ -3270,7 +3483,7 @@
         fetch('./package.json').then(r => r.ok ? r.json() : null).then(data => {
             const v = data?.version;
             if (!v) return;
-            document.title = `Ooznest Control v${v}`;
+            document.title = `Ooznest Control Duet v${v}`;
             const el = document.getElementById('electron-title-version');
             if (el) el.textContent = `v${v}`;
         }).catch(() => {});
@@ -3508,6 +3721,20 @@
             }
         });
 
+        window.unloadDuetPreview = () => {
+            if (window.jobController?.sdJobActive || window.jobControl?.gcodeStreamer.active || window.sdHandler?.isDownloading) {
+                window.showToast?.('Wait for the job or download to finish before unloading.', 'triangle-alert', 'error');
+                return;
+            }
+            window.currentGCodeContent = null;
+            window.currentSDFile = null;
+            window.editor?.setValue('');
+            document.getElementById('editor-file-name').innerText = 'No file loaded';
+            document.getElementById('editor-line-count').innerText = '0';
+            viewer.processGCodeString('', '');
+            window.uiManager.updateRunButtonsState();
+        };
+
         document.addEventListener('contextmenu', (e) => {
             const btn = e.target.closest('.jog-btn, .jog-btn-extra, .dro-zero-btn, .dro-sub-btn, #btn-reset, #btn-connect, .tab-btn, .overlay-btn, [onmousedown]');
             if (btn) e.preventDefault();
@@ -3549,6 +3776,7 @@
         });
         window.ws.on('disconnect', () => {
             window.uiManager.updateConnectionState(false, window.ws, window.sdHandler);
+            window.droHandler?._updateStateBadge('Offline');
             if (window.syncSdUploadBtn) window.syncSdUploadBtn();
             if (window.grblSettings?.syncEmptyState) window.grblSettings.syncEmptyState();
             window.dispatchEvent(new CustomEvent('machine-connection-changed', { detail: { connected: false } }));
@@ -3701,15 +3929,17 @@
                 const file = new File([content], filename, { type: "text/plain" });
 
                 // Start Upload with Callback
-                window.sdHandler.startUpload(file, (uploadedName) => {
+                window.sdHandler.startUpload(file, (uploadedName, uploadedPath) => {
+                    const duet = ws.duet;
                     // On Success, Ask to Run
-                    const fullPath = window.sdHandler.path === '/' ? uploadedName : `${window.sdHandler.path}/${uploadedName}`;
+                    const fullPath = uploadedPath ?? (window.sdHandler.path === '/' ? uploadedName : `${window.sdHandler.path}/${uploadedName}`);
                     setTimeout(() => {
                         reporter.showConfirm('Run Now?', `Upload complete. Run ${uploadedName} now?`, () => {
+                            if (duet && ws.duet !== duet) return;
                             ws.sendCommand(`$F=${fullPath}`);
                         });
                     }, 500);
-                }, { skipConfirm: true });
+                }, { skipConfirm: true, runJob: true });
             });
         };
 
@@ -3719,6 +3949,7 @@
         window.sdJobActive = false;
 
         window.addEventListener('sd-status', (e) => {
+            document.getElementById('duet-preview-job').classList.toggle('hidden', !window.ws?.duetJobFile);
             const { pct, filename } = e.detail;
 
             // If SD job just started (or we just noticed it)
@@ -3734,6 +3965,7 @@
         });
 
         window.addEventListener('sd-job-complete', () => {
+            document.getElementById('duet-preview-job').classList.add('hidden');
             if (window.sdJobActive) {
                 window.term.writeln("\x1b[32m[SD Job] Complete/Idle.\x1b[0m");
                 window.jobControl.resetJobUI();

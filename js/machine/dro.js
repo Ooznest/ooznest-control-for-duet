@@ -82,9 +82,13 @@ export class DROHandler {
         });
     }
 
-    setWCS(wcs) {
-        this.ws.sendCommand(wcs);
-        this.term.writeln(`\x1b[34m> Switched to ${wcs}\x1b[0m`);
+    async setWCS(wcs) {
+        if (!this._requireConnectedForAction() || !/^G5[4-9]$/.test(wcs)) return;
+        try {
+            await this.ws.sendCommand(wcs);
+        } catch (error) {
+            this.ws.emit('error', error);
+        }
     }
 
     goToPredefined(pos) {
@@ -185,7 +189,7 @@ export class DROHandler {
         let feedOverride = null;
         let spindleOverride = null;
         let rapidOverride = null;
-        let homedMask = this.homedMask || 0;
+        let homedMask = this.homedMask ?? null;
         let isSdPrinting = false;
         // let foundAccessories = false; // DEBOUNCE REMOVED
 
@@ -469,11 +473,11 @@ export class DROHandler {
 
         if (isAlarmed) {
             stateEl.classList.add('status-alarm', 'animate-pulse');
-        } else if (s.startsWith('hold') || s.startsWith('door') || s.startsWith('sleep')) {
+        } else if (['hold', 'door', 'sleep', 'off'].includes(s)) {
             stateEl.classList.add('status-warn');
         } else if (s.startsWith('run') || s.startsWith('jog') || s.startsWith('homing')) {
             stateEl.classList.add('status-run');
-        } else {
+        } else if (s === 'idle') {
             stateEl.classList.add('status-idle');
         }
 

@@ -231,6 +231,28 @@ export class SDCardHandler {
     // --- Actions ---
 
     async refresh() {
+        if (this.ws.duet) {
+            const path = this.path;
+            this._prepareListing();
+            try {
+                let first = 0;
+                do {
+                    const page = await this.ws.duet.call('filelist', { dir: '0:' + path, first });
+                    if (this.path !== path || !this.ws.duet) return;
+                    for (const entry of page.files) {
+                        if (/[\[\]|/\x00-\x1f<>"\\]/.test(entry.name)) continue;
+                        const file = this._joinPath(path, entry.name);
+                        if (entry.type === 'd') this._ensureDirectoryVisible(file);
+                        else this._addSdFile('[FILE:' + file + '|SIZE:' + entry.size + ']');
+                    }
+                    if (page.next && page.next <= first) throw new Error('Invalid Duet file list continuation');
+                    first = page.next;
+                } while (first);
+            } catch (error) {
+                this.term.writeln(error.message);
+            }
+            return;
+        }
         if (!this.ws.isGrblHAL) return;
         // Prevent SD refresh if machine is in an Alarm state (Error 79)
         const stateEl = document.getElementById('machine-state');
@@ -430,13 +452,47 @@ export class SDCardHandler {
     }
 
     _renderDirectoryActions(dirPath) {
-        if (!this._isDirectoryEmpty(dirPath)) return '';
+        const rename = this._renderDuetRename(dirPath);
+        if (!this._isDirectoryEmpty(dirPath)) return rename;
 
-        const safePath = this._escapeJsString(dirPath);
-        return `
-            <button class="macro-card-action-btn" onclick="window.sdHandler.removeDirectory('${safePath}')" title="Delete folder" type="button" aria-label="Delete folder">
+        const safePath = this._escapeHtml(dirPath);
+        return rename + `
+            <button class="macro-card-action-btn" data-sd-path="${safePath}" onclick="window.sdHandler.removeDirectory(this.dataset.sdPath)" title="Delete folder" type="button" aria-label="Delete folder">
                 <i data-lucide="trash-2" style="width:12px;height:12px"></i>
             </button>`;
+    }
+
+    _renderDuetRename(path) {
+        if (!this.ws.duet) return '';
+        return `<button class="macro-card-action-btn" data-sd-path="${this._escapeHtml(path)}" onclick="window.sdHandler.renameDuetEntry(this.dataset.sdPath)" title="Rename" type="button" aria-label="Rename">
+            <i data-lucide="pencil" style="width:12px;height:12px"></i>
+        </button>`;
+    }
+
+    renameDuetEntry(path) {
+        const duet = this.ws.duet;
+        if (!duet || !window.isSdActionAvailable?.()) return;
+        const separator = path.lastIndexOf('/');
+        const originalName = path.slice(separator + 1);
+        window.reporter.showPrompt('Rename', 'Enter a new name:', originalName, async value => {
+            const name = String(value ?? '').trim();
+            if (!name || name === originalName) return;
+            if (name === '.' || name === '..' || /[<>:"/\\|?*\x00-\x1f]/.test(name)) {
+                window.showToast?.('Enter a valid file or folder name.', 'triangle-alert', 'error');
+                return;
+            }
+            if (this.ws.duet !== duet || !window.isSdActionAvailable?.()) return;
+            try {
+                await duet.call('move', {
+                    old: '0:' + path,
+                    new: '0:' + path.slice(0, separator + 1) + name,
+                    deleteexisting: 'no'
+                });
+                await this.refresh();
+            } catch (error) {
+                window.showToast?.(error.message, 'triangle-alert', 'error');
+            }
+        });
     }
 
     _renderDirectoryBadge(dirPath) {
@@ -486,7 +542,7 @@ export class SDCardHandler {
 
         row.innerHTML = `
           <td class="px-4 py-3 md:px-6 md:py-3 text-grey-dark align-middle truncate overflow-hidden">
-              <button type="button" class="flex items-center gap-2 truncate w-full text-left text-primary hover:underline" onclick="window.sdHandler.enterDir('${this._escapeJsString(name)}')">
+              <button type="button" class="flex items-center gap-2 truncate w-full text-left text-primary hover:underline" data-sd-name="${this._escapeHtml(name)}" onclick="window.sdHandler.enterDir(this.dataset.sdName)">
                   <i data-lucide="folder" style="width:14px;height:14px" class="text-primary opacity-70 shrink-0"></i>
                   <span class="truncate" title="${this._escapeHtml(name)}">${this._escapeHtml(name)}</span>
                   <span data-folder-count>${this._renderDirectoryBadge(normalized)}</span>
@@ -565,6 +621,7 @@ export class SDCardHandler {
         this.path = normalized;
         this._renderBreadcrumb();
         this._prepareListing();
+        if (this.ws.duet) return this.refresh();
         this.ws.sendCommand(`$CWD=${normalized}`);
         setTimeout(() => this._requestSerialList(), 250);
     }
@@ -601,6 +658,15 @@ export class SDCardHandler {
         this._changeDirectory(targetPath);
     }
 
+    async _mutateDuetDirectory(endpoint, path) {
+        try {
+            await this.ws.duet.call(endpoint, { [endpoint === 'mkdir' ? 'dir' : 'name']: '0:' + path });
+            await this.refresh();
+        } catch (error) {
+            window.showToast?.(error.message, 'triangle-alert', 'error');
+        }
+    }
+
     createDirectory() {
         if (!window.isSdActionAvailable || !window.isSdActionAvailable()) {
             if (window.reporter) window.reporter.showAlert('SD Card Unavailable', 'SD Card functions are currently unavailable.');
@@ -614,6 +680,7 @@ export class SDCardHandler {
             if (!trimmed) return;
 
             const fullPath = trimmed.startsWith('/') ? this._normalizePath(trimmed) : this._joinPath(this.path, trimmed);
+            if (this.ws.duet) return this._mutateDuetDirectory('mkdir', fullPath);
             this._mkdirPending = { refreshPath: this.path };
             this.ws.sendCommand(`$FMD=${fullPath}`);
         };
@@ -629,7 +696,7 @@ export class SDCardHandler {
     removeDirectory(dirPath) {
         const normalized = this._normalizePath(dirPath);
         const folderName = normalized.split('/').filter(Boolean).pop() || '/';
-        if (!this._isDirectoryEmpty(normalized)) {
+        if (!this.ws.duet && !this._isDirectoryEmpty(normalized)) {
             if (window.reporter) {
                 window.reporter.showAlert('Folder Not Empty', 'Only empty folders can be deleted.');
             }
@@ -638,6 +705,7 @@ export class SDCardHandler {
 
         const reporter = window.reporter || (window.AlarmsAndErrors ? new window.AlarmsAndErrors(this.ws) : null);
         const processDelete = () => {
+            if (this.ws.duet) return this._mutateDuetDirectory('delete', normalized);
             this._rmdirPending = { refreshPath: this.path };
             this.ws.sendCommand(`$FRD=${normalized}`);
         };
@@ -654,6 +722,7 @@ export class SDCardHandler {
         const fullPath = this.path === '/' ? `/${fileName}` : `${this.path}/${fileName}`;
 
         const processDelete = async () => {
+            if (this.ws.duet) return this._mutateDuetDirectory('delete', fullPath);
             if (this.ws.httpBaseUrl) {
                 try {
                     let p = this.path;
@@ -679,13 +748,79 @@ export class SDCardHandler {
         }
     }
 
-    async preview(fileName, skipConfirm = false) {
+    async editDuetFile(fileName, directory = this.path, transform = content => content) {
+        const duet = this.ws.duet;
+        if (!duet) {
+            window.showToast?.('Connect to the Duet over HTTP to edit system files.', 'triangle-alert', 'error');
+            return;
+        }
+        const name = '0:' + this._joinPath(directory, fileName);
+        try {
+            const bytes = await duet.call('download', { name });
+            if (this.ws.duet !== duet || !window.editor) return;
+            const content = transform(new TextDecoder().decode(bytes));
+            window.currentSDFile = null;
+            window.currentGCodeContent = null;
+            window.uiManager?.updateRunButtonsState();
+            window.editor.setValue(content);
+            document.getElementById('editor-file-name').innerText = fileName;
+            document.getElementById('editor-line-count').innerText = content.split('\n').length;
+            const upload = document.querySelector('#editor-view [onclick="uploadEditorToSD()"]');
+            if (upload) {
+                const original = this.editorUploadHandler ??= upload.onclick;
+                upload.onclick = () => {
+                    if (window.currentGCodeContent !== null || document.getElementById('editor-file-name').innerText !== fileName) {
+                        upload.onclick = original;
+                        return original?.call(upload);
+                    }
+                    const editedContent = window.editor.getValue();
+                    window.reporter.showConfirm('Save System File', 'Overwrite ' + name + '?', async () => {
+                        if (this.ws.duet !== duet || window.currentGCodeContent !== null ||
+                            document.getElementById('editor-file-name').innerText !== fileName ||
+                            window.editor.getValue() !== editedContent) {
+                            window.showToast?.('Save cancelled because the editor or connection changed. Review the file and save again.', 'triangle-alert', 'error');
+                            return;
+                        }
+                        try {
+                            await duet.call('upload', { name }, new TextEncoder().encode(editedContent));
+                            if (this.ws.duet !== duet) return;
+                            const saved = await duet.call('download', { name });
+                            if (this.ws.duet !== duet) return;
+                            if (new TextDecoder().decode(saved) !== editedContent) {
+                                throw new Error('The Duet returned different contents after saving ' + fileName);
+                            }
+                            window.showToast?.('Saved ' + fileName, 'check', 'success');
+                            await this.refresh();
+                        } catch (error) {
+                            window.showToast?.(error.message, 'triangle-alert', 'error');
+                        }
+                    });
+                };
+            }
+            window.switchTab('editor-view');
+        } catch (error) {
+            window.showToast?.(error.message, 'triangle-alert', 'error');
+        }
+    }
+
+    previewDuetJob() {
+        const job = this.ws.duetJobFile;
+        if (this.isDownloading || !this.ws.duet || typeof job !== 'string' || !job) return;
+        this.pendingRunFile = null;
+        const path = job.replace(/^0:/, '');
+        const fullPath = path.startsWith('/') ? path : `/gcodes/${path}`;
+        return this.preview(fullPath.split('/').pop(), true, fullPath);
+    }
+
+    async preview(fileName, skipConfirm = false, jobPath) {
         if (this.isDownloading) return;
+        const fullPath = jobPath ?? (this.path === '/' ? `/${fileName}` : `${this.path}/${fileName}`);
+        const duet = this.ws.duet;
 
         const processPreview = async () => {
+            if (this.isDownloading || (duet && this.ws.duet !== duet)) return;
             this.isDownloading = true;
             this.downloadingFile = fileName;
-            const fullPath = this.path === '/' ? `/${fileName}` : `${this.path}/${fileName}`;
             this.downloadingFullPath = fullPath;
             this.downloadTotal = this.files[fileName] || 0;
             console.log(`Starting download for ${fileName}. Expected size: ${this.downloadTotal} bytes`);
@@ -696,6 +831,21 @@ export class SDCardHandler {
             // Show Progress Bar in UI
             this._toggleProgressUI(fileName, true);
             this.term.writeln(`\x1b[33mDownloading ${fullPath}...\x1b[0m`);
+
+            if (duet) {
+                try {
+                    const bytes = await duet.call('download', { name: '0:' + fullPath });
+                    if (this.ws.duet !== duet) throw new Error('Duet connection changed during download');
+                    this.downloadBuffer = new TextDecoder().decode(bytes);
+                    this._finishDownload();
+                } catch (error) {
+                    this.isDownloading = false;
+                    this.pendingRunFile = null;
+                    this._toggleProgressUI(fileName, false);
+                    window.showToast?.(error.message, 'triangle-alert', 'error');
+                }
+                return;
+            }
 
             if (this.ws.httpBaseUrl) {
                 try {
@@ -729,22 +879,27 @@ export class SDCardHandler {
     runFile(fileName) {
         const reporter = window.reporter || (window.AlarmsAndErrors ? new window.AlarmsAndErrors(this.ws) : null);
         const fullPath = this.path === '/' ? `/${fileName}` : `${this.path}/${fileName}`;
+        const duet = this.ws.duet;
+        const run = () => {
+            if (duet && this.ws.duet !== duet) return;
+            return this.ws.sendCommand(`$F=${fullPath}`);
+        };
+        const load = () => {
+            if (this.isDownloading || (duet && this.ws.duet !== duet)) return;
+            this.pendingRunFile = fileName;
+            return this.preview(fileName, true, fullPath);
+        };
 
         if (reporter) {
             reporter.showConfirm(
                 'Load to Viewer?',
                 `Load ${fileName} into the 3D Preview before running?`,
-                () => { // Yes: Load
-                    this.pendingRunFile = fileName;
-                    this.preview(fileName, true);
-                },
+                load,
                 () => { // No: Ask to run directly
                     reporter.showConfirm(
                         'Run Directly?',
                         `Run ${fileName} directly from SD Card without preview?`,
-                        () => { // Yes
-                            this.ws.sendCommand(`$F=${fullPath}`);
-                        },
+                        run,
                         null, // Cancel: Do nothing
                         'Run Now',
                         'Cancel'
@@ -755,23 +910,10 @@ export class SDCardHandler {
             );
         } else {
             // Fallback
-            const processDirectRun = () => {
-                this.ws.sendCommand(`$F=${fullPath}`);
-            };
-
-            const processLoadAndView = () => {
-                this.pendingRunFile = fileName;
-                this.preview(fileName, true);
-            };
-
-            if (reporter) {
-                reporter.showConfirm('Load & View', `Load ${fileName} to 3D Viewer?`, processLoadAndView, () => {
-                    reporter.showConfirm('Run Directly', `Run ${fileName} directly from SD?`, processDirectRun);
-                });
-            } else if (confirm(`Load ${fileName} to 3D Viewer?`)) {
-                processLoadAndView();
+            if (confirm(`Load ${fileName} to 3D Viewer?`)) {
+                load();
             } else if (confirm(`Run ${fileName} directly from SD?`)) {
-                processDirectRun();
+                run();
             }
         }
     }
@@ -839,7 +981,7 @@ export class SDCardHandler {
             </button>`;
         } else {
             runActionBtn = `
-            <button class="macro-card-action-btn" onclick="window.sdHandler.runFile('${name}')" title="Run" type="button" aria-label="Run file">
+            <button class="macro-card-action-btn" onclick="window.sdHandler.runFile(this.closest('tr').dataset.filename)" title="Run" type="button" aria-label="Run file">
                 <i data-lucide="play" style="width:12px;height:12px"></i>
             </button>`;
         }
@@ -847,13 +989,17 @@ export class SDCardHandler {
         // Generate Safe ID for progress selection (base64 encoded to handle special chars)
         const safeId = btoa(fullPath).replace(/=/g, '');
 
+        const systemFile = this.ws.duet && /^\/sys(?:\/|$)/i.test(this.path);
+        const openAction = systemFile ? 'editDuetFile' : 'preview';
+        const openLabel = systemFile ? 'Edit' : 'Preview';
+
         const row = `
-          <tr class="border-b border-grey-light last:border-b-0 group" data-filename="${name}" data-fullpath="${fullPath}">
+          <tr class="border-b border-grey-light last:border-b-0 group" data-filename="${this._escapeHtml(name)}" data-fullpath="${this._escapeHtml(fullPath)}">
               <td class="px-4 py-2 md:px-6 md:py-3 text-grey-dark align-middle truncate overflow-hidden">
                   <div class="flex flex-col justify-center w-full">
                       <div class="flex items-center gap-2 truncate">
                           <i data-lucide="file-code" style="width:14px;height:14px" class="text-grey shrink-0"></i>
-                          <span class="truncate" title="${name}">${name}</span>
+                          <span class="truncate" title="${this._escapeHtml(name)}">${this._escapeHtml(name)}</span>
                       </div>
 
                       <div id="sd-prog-${safeId}" class="hidden w-full max-w-[200px] mt-1.5 ml-6 md:ml-0 bg-grey-light rounded-full h-1">
@@ -867,15 +1013,16 @@ export class SDCardHandler {
 
               <td class="w-[120px] px-1 py-2 text-right align-middle whitespace-nowrap">
                   <div class="macro-card-actions justify-end ml-auto" style="position: static; opacity: 1;">
-                      <button class="macro-card-action-btn" onclick="window.sdHandler.delete('${name}')" title="Delete" type="button" aria-label="Delete file">
+                      ${this._renderDuetRename(fullPath)}
+                      <button class="macro-card-action-btn" onclick="window.sdHandler.delete(this.closest('tr').dataset.filename)" title="Delete" type="button" aria-label="Delete file">
                         <i data-lucide="trash-2" style="width:12px;height:12px"></i>
                       </button>
 
-                      <button class="macro-card-action-btn" onclick="window.sdHandler.preview('${name}')" title="Preview" type="button" aria-label="Preview file">
+                      <button class="macro-card-action-btn" onclick="window.sdHandler.${openAction}(this.closest('tr').dataset.filename)" title="${openLabel}" type="button" aria-label="${openLabel} file">
                         <i data-lucide="eye" style="width:12px;height:12px"></i>
                       </button>
 
-                      ${runActionBtn}
+                      ${systemFile ? '' : runActionBtn}
                   </div>
               </td>
           </tr>`;
@@ -938,16 +1085,19 @@ export class SDCardHandler {
 
         this.isDownloading = false;
         const filename = this.downloadingFile; // Capture name
+        const fullPath = this.downloadingFullPath;
+        const duet = this.ws.duet;
         this.downloadingFile = null;
         this.downloadTotal = 0;
 
         if (this.downloadTimeout) clearTimeout(this.downloadTimeout);
 
         // Remove XML-style tags and realtime status reports
-        const cleanContent = this.downloadBuffer.replace(/<[^>]*>/g, '').trim();
+        const cleanContent = duet ? this.downloadBuffer : this.downloadBuffer.replace(/<[^>]*>/g, '').trim();
         const lines = cleanContent.split('\n').filter(l => l.trim().length > 0 && l.trim() !== 'ok');
 
         if (lines.length === 0) {
+            this.pendingRunFile = null;
             this.term.writeln(`\x1b[31mDownload Failed: No data.\x1b[0m`);
             console.error("SD Download Failed: Buffer empty");
         } else {
@@ -955,7 +1105,7 @@ export class SDCardHandler {
             console.log(`SD Download Success: ${lines.length} lines. Calling callbacks...`);
             if (this.callbacks.onDownloadComplete) {
                 // Pass filename AND fullPath
-                this.callbacks.onDownloadComplete(cleanContent, filename, this.downloadingFullPath);
+                this.callbacks.onDownloadComplete(cleanContent, filename, fullPath);
             }
             this.viewer.processGCodeString(cleanContent, `${filename} parsed`);
             if (this.callbacks.switchToViewer) {
@@ -968,17 +1118,20 @@ export class SDCardHandler {
                 setTimeout(() => {
                     const reporter = window.reporter || (window.AlarmsAndErrors ? new window.AlarmsAndErrors(this.ws) : null);
                     const promptMsg = `File ${filename} loaded. Run now?`;
-                    const fullPath = this.path === '/' ? `/${filename}` : `${this.path}/${filename}`;
+                    const run = () => {
+                        if (duet && this.ws.duet !== duet) return;
+                        return this.ws.sendCommand(`$F=${fullPath}`);
+                    };
 
                     if (reporter) {
                         reporter.showConfirm('Run Job', promptMsg,
-                            () => this.ws.sendCommand(`$F=${fullPath}`),
+                            run,
                             null,
                             'Run Job',
                             'Cancel'
                         );
                     } else if (confirm(promptMsg)) {
-                        this.ws.sendCommand(`$F=${fullPath}`);
+                        run();
                     }
                 }, 500);
             }
@@ -1034,6 +1187,22 @@ export class SDCardHandler {
         const skipConfirm = options.skipConfirm === true;
 
         const processUpload = async () => {
+            if (this.ws.duet) {
+                const path = this._joinPath(options.runJob ? '/gcodes' : this.path, name);
+                const duet = this.ws.duet;
+                try {
+                    const bytes = await file.arrayBuffer();
+                    if (this.ws.duet !== duet) throw new Error('Duet connection changed before upload');
+                    await duet.call('upload', { name: '0:' + path }, bytes);
+                    if (this.ws.duet !== duet) throw new Error('Duet connection changed during upload');
+                    await this.refresh();
+                    if (this.ws.duet === duet) onComplete?.(name, path);
+                } catch (error) {
+                    window.showToast?.(error.message, 'triangle-alert', 'error');
+                }
+                return;
+            }
+
             const fp = this.path === '/' ? name : `${this.path}/${name}`;
             this.ymodem.fileName = name;
             this.ymodem.onComplete = onComplete;

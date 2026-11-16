@@ -236,8 +236,12 @@ export class ProbeHandler {
         return false;
     }
 
-    _requireProbeSafe() {
+    _requireProbeSafe(duetSupported = false) {
         if (!this._requireConnected()) return false;
+        if ((this.ws.duet || this.ws.isDuetSerial) && !duetSupported) {
+            window.reporter?.showAlert('Probe operation unavailable', 'Use Outside Corner or Surfaces with Duet.');
+            return false;
+        }
         if (!this.probeSafe) {
             const reporter = window.reporter || (window.AlarmsAndErrors ? new window.AlarmsAndErrors(this.ws) : null);
             if (reporter) {
@@ -684,8 +688,18 @@ export class ProbeHandler {
     // User's proven macro — start above the hole.
     // ==========================================
     runAutoCorner() {
-        if (!this._requireProbeSafe()) return;
+        if (!this._requireProbeSafe(true)) return;
         this.saveSettings();
+        if (this.ws.duet || this.ws.isDuetSerial) {
+            const s = this.store.data.probe;
+            this.ws.probeDuetAxis(null, {
+                corner: this.selections.outsideCorner, inset: s.cornerStartInset ?? 22.5,
+                xOffset: s.toolDiameter / 2 + this._getPlateOffsetX(s),
+                yOffset: s.toolDiameter / 2 + this._getPlateOffsetY(s),
+                offset: s.plateThickness, feed: s.feed, travel: s.travel, retract: s.retract
+            });
+            return;
+        }
         this.activeRoutine = 'AUTO_CORNER';
         this.routineStep = 0;
         const s = this.store.data.probe;
@@ -763,7 +777,7 @@ export class ProbeHandler {
     }
 
     runSingleAxis(axis, dir) {
-        if (!this._requireProbeSafe()) return;
+        if (!this._requireProbeSafe(true)) return;
         this.saveSettings();
         const s = this.store.data.probe;
         const isPlate = this._getProbeMode(s) === 'plate';
@@ -773,6 +787,13 @@ export class ProbeHandler {
             : (isPlate ? this._getPlateOffsetY(s) : 0);
         const totalOffset = axis === 'Z' ? (isPlate ? s.plateThickness : 0) : rad + plateOffset;
         const setVal = -(dir * totalOffset);
+        if (this.ws.duet || this.ws.isDuetSerial) {
+            this.ws.probeDuetAxis(null, {
+                direction: axis + (dir < 0 ? '-' : '+'), travel: s.travel,
+                offset: setVal, feed: s.feed, retract: s.retract
+            });
+            return;
+        }
         this.term.writeln(`\x1b[34m> Probing ${axis}... (${isPlate ? 'Plate' : 'Probe'})\x1b[0m`);
         this.sendBatch(['G21', 'G91', `G38.2 ${axis}${dir * s.travel} F${s.feed}`, `G10 L20 P0 ${axis}${setVal.toFixed(3)}`, `G0 ${axis}${-(dir * s.retract)}`, 'G90']);
         this._resetProbeTest();
